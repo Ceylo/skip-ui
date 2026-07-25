@@ -409,8 +409,14 @@ public final class List : View, Renderable {
     /// Minimum width for a single reveal button; grows to fit longer labels.
     private static let swipeButtonMinWidth: Dp = 80.dp
 
-    static func contentModifier(level: Int) -> Modifier {
-        return Modifier.padding(start: (horizontalItemInset + level * levelInset).dp, end: horizontalItemInset.dp, top: verticalItemInset.dp, bottom: verticalItemInset.dp).fillMaxWidth().requiredHeightIn(min: minimumItemHeight.dp)
+    /// `insets` overrides the default item padding edge by edge, as `.listRowInsets` does.
+    /// The leading inset is still offset by the outline `level` so nested rows stay indented.
+    static func contentModifier(level: Int, insets: EdgeInsets? = nil) -> Modifier {
+        let leading = insets?.leading ?? horizontalItemInset
+        let trailing = insets?.trailing ?? horizontalItemInset
+        let top = insets?.top ?? verticalItemInset
+        let bottom = insets?.bottom ?? verticalItemInset
+        return Modifier.padding(start: (leading + level * levelInset).dp, end: trailing.dp, top: top.dp, bottom: bottom.dp).fillMaxWidth().requiredHeightIn(min: minimumItemHeight.dp)
     }
 
     @Composable static func RenderSeparator(level: Int) {
@@ -490,7 +496,7 @@ public final class List : View, Renderable {
         // The given modifiers include elevation shadow for dragging, etc that need to go before the others
         let containerContext = context.content(modifier: modifier.then(itemModifier).then(context.modifier))
         let contentContext = context.content()
-        let contentModifier = Self.contentModifier(level: level)
+        let contentModifier = Self.contentModifier(level: level, insets: listItemModifier?.insets)
         let renderContainer: @Composable (ComposeContext) -> Void = { context in
             Column(modifier: context.modifier) {
                 let placement = EnvironmentValues.shared._placement
@@ -1366,9 +1372,18 @@ extension View {
         return self
     }
 
-    @available(*, unavailable)
     public func listRowInsets(_ insets: EdgeInsets?) -> some View {
+        #if SKIP
+        return ModifiedContent(content: self, modifier: ListItemModifier(insets: insets))
+        #else
         return self
+        #endif
+    }
+
+    // SKIP @bridge
+    public func listRowInsets(bridgedTop: Double, bridgedLeading: Double, bridgedBottom: Double, bridgedTrailing: Double, hasInsets: Bool) -> any View {
+        let insets = hasInsets ? EdgeInsets(top: bridgedTop, leading: bridgedLeading, bottom: bridgedBottom, trailing: bridgedTrailing) : nil
+        return listRowInsets(insets)
     }
 
     // SKIP @bridge
@@ -1396,24 +1411,28 @@ extension View {
 final class ListItemModifier: RenderModifier {
     let background: View?
     let separator: Visibility?
+    let insets: EdgeInsets?
 
-    init(background: View? = nil, separator: Visibility? = nil) {
+    init(background: View? = nil, separator: Visibility? = nil, insets: EdgeInsets? = nil) {
         self.background = background
         self.separator = separator
+        self.insets = insets
         super.init()
     }
 
     static func combined(for renderable: Renderable) -> ListItemModifier {
         var background: View? = nil
         var separator: Visibility? = nil
+        var insets: EdgeInsets? = nil
         renderable.forEachModifier {
             if let listItemModifier = $0 as? ListItemModifier {
                 background = background ?? listItemModifier.background
                 separator = separator ?? listItemModifier.separator
+                insets = insets ?? listItemModifier.insets
             }
             return nil
         }
-        return ListItemModifier(background: background, separator: separator)
+        return ListItemModifier(background: background, separator: separator, insets: insets)
     }
 }
 #endif
