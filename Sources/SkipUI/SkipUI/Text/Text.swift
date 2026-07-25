@@ -63,6 +63,21 @@ public struct Text: View, Renderable, Equatable {
         modifiedView = textView
     }
 
+    /// Markdown content, used to bridge a Fuse `Text(AttributedString)`.
+    ///
+    /// Deliberately not routed through `LocalizedStringKey`: this is user content, so
+    /// it must not be looked up in a bundle or run through `String.format`.
+    // SKIP @bridge
+    public init(bridgedMarkdown: String) {
+        #if SKIP
+        let attributedString = (try? AttributedString(markdown: bridgedMarkdown)) ?? AttributedString(stringLiteral: bridgedMarkdown)
+        textView = _Text(attributedString: attributedString)
+        #else
+        textView = _Text(verbatim: bridgedMarkdown)
+        #endif
+        modifiedView = textView
+    }
+
     public init(_ key: LocalizedStringKey, tableName: String? = nil, bundle: Bundle? = Bundle.main, comment: StaticString? = nil) {
         textView = _Text(key: key, tableName: tableName, bundle: bundle)
         modifiedView = textView
