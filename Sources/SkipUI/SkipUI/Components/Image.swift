@@ -552,6 +552,12 @@ public struct Image : View, Renderable, Equatable {
         case "paperplane": return "Icons.Outlined.Send" //􀈟
         case "gearshape": return "Icons.Outlined.Settings" //􀣋
         case "square.and.arrow.up": return "Icons.Outlined.Share" //􀈂
+        case "square.and.arrow.down": return "Icons.Outlined.FileDownload" //􀈄
+        case "safari": return "Icons.Outlined.Public" //􀆪
+        case "bubble": return "Icons.Outlined.ChatBubbleOutline" //􀌪
+        case "exclamationmark.bubble": return "Icons.Outlined.CommentsDisabled" //􀌥
+        case "message": return "Icons.Outlined.Chat" //􀌤
+        case "text.badge.star": return "Icons.Outlined.Info" //􀉿
         case "cart": return "Icons.Outlined.ShoppingCart" //􀍩
         // #148 Icons.Outlined.Star is not actually outlined!
         // case "star": return "Icons.Outlined.Star" //􀋃
@@ -641,6 +647,11 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Outlined.Send": return Icons.Outlined.Send // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.Send
         case "Icons.Outlined.Settings": return Icons.Outlined.Settings
         case "Icons.Outlined.Share": return Icons.Outlined.Share
+        case "Icons.Outlined.FileDownload": return Icons.Outlined.FileDownload
+        case "Icons.Outlined.Public": return Icons.Outlined.Public
+        case "Icons.Outlined.ChatBubbleOutline": return Icons.Outlined.ChatBubbleOutline
+        case "Icons.Outlined.CommentsDisabled": return Icons.Outlined.CommentsDisabled
+        case "Icons.Outlined.Chat": return Icons.Outlined.Chat
         case "Icons.Outlined.ShoppingCart": return Icons.Outlined.ShoppingCart
         case "Icons.Outlined.Star": return Icons.Outlined.Star
         case "Icons.Outlined.ThumbUp": return Icons.Outlined.ThumbUp
