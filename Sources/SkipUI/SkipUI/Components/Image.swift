@@ -555,6 +555,7 @@ public struct Image : View, Renderable, Equatable {
         case "square.and.arrow.down": return "Icons.Outlined.FileDownload" //􀈄
         case "safari": return "Icons.Outlined.Public" //􀆪
         case "bubble": return "Icons.Outlined.ChatBubbleOutline" //􀌪
+        case "ellipsis.bubble": return "Icons.Outlined.Forum" //􀌥
         case "exclamationmark.bubble": return "Icons.Outlined.CommentsDisabled" //􀌥
         case "message": return "Icons.Outlined.Chat" //􀌤
         case "text.badge.star": return "Icons.Outlined.Info" //􀉿
@@ -650,6 +651,7 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Outlined.FileDownload": return Icons.Outlined.FileDownload
         case "Icons.Outlined.Public": return Icons.Outlined.Public
         case "Icons.Outlined.ChatBubbleOutline": return Icons.Outlined.ChatBubbleOutline
+        case "Icons.Outlined.Forum": return Icons.Outlined.Forum
         case "Icons.Outlined.CommentsDisabled": return Icons.Outlined.CommentsDisabled
         case "Icons.Outlined.Chat": return Icons.Outlined.Chat
         case "Icons.Outlined.ShoppingCart": return Icons.Outlined.ShoppingCart
