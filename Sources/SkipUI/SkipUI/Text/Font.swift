@@ -319,7 +319,8 @@ public struct Font : Hashable {
     }
 
     #if SKIP
-    private static func fontWeight(for weight: Font.Weight?) -> FontWeight? {
+    // Internal rather than private: the rich-text bridge maps run weights too.
+    static func fontWeight(for weight: Font.Weight?) -> FontWeight? {
         switch weight {
         case nil:
             return nil

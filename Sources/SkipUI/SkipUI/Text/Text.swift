@@ -63,18 +63,15 @@ public struct Text: View, Renderable, Equatable {
         modifiedView = textView
     }
 
-    /// Markdown content, used to bridge a Fuse `Text(AttributedString)`.
+    /// Styled content, used to bridge a Fuse `Text(AttributedString)`.
     ///
-    /// Deliberately not routed through `LocalizedStringKey`: this is user content, so
-    /// it must not be looked up in a bundle or run through `String.format`.
+    /// The runs are encoded rather than re-emitted as markdown, which cannot express
+    /// colour, font size, underline or baseline at all — see `RichText`. Deliberately
+    /// not routed through `LocalizedStringKey` either: this is user content, so it must
+    /// not be looked up in a bundle or run through `String.format`.
     // SKIP @bridge
-    public init(bridgedMarkdown: String) {
-        #if SKIP
-        let attributedString = (try? AttributedString(markdown: bridgedMarkdown)) ?? AttributedString(stringLiteral: bridgedMarkdown)
-        textView = _Text(attributedString: attributedString)
-        #else
-        textView = _Text(verbatim: bridgedMarkdown)
-        #endif
+    public init(bridgedRichText: String) {
+        textView = _Text(richText: bridgedRichText)
         modifiedView = textView
     }
 
@@ -365,14 +362,17 @@ public struct Text: View, Renderable, Equatable {
 struct _Text: View, Renderable, Equatable {
     let verbatim: String?
     let attributedString: AttributedString?
+    /// An encoded `RichText` payload; see `Text(bridgedRichText:)`.
+    let richText: String?
     let key: LocalizedStringKey?
     let tableName: String?
     let locale: Locale?
     let bundle: Bundle?
 
-    init(verbatim: String? = nil, attributedString: AttributedString? = nil, key: LocalizedStringKey? = nil, tableName: String? = nil, locale: Locale? = nil, bundle: Bundle? = nil) {
+    init(verbatim: String? = nil, attributedString: AttributedString? = nil, richText: String? = nil, key: LocalizedStringKey? = nil, tableName: String? = nil, locale: Locale? = nil, bundle: Bundle? = nil) {
         self.verbatim = verbatim
         self.attributedString = attributedString
+        self.richText = richText
         self.key = key
         self.tableName = tableName
         self.locale = locale
@@ -391,6 +391,7 @@ struct _Text: View, Renderable, Equatable {
 
     @Composable private func localizedTextInfo() -> (String, MarkdownNode?, kotlin.collections.List<AnyHashable>?) {
         if let verbatim { return (verbatim, nil, nil) }
+        if let richText { return (RichText.plainText(from: richText), nil, nil) }
         if let attributedString { return (attributedString.string, attributedString.markdownNode, nil) }
         guard let key else { return ("", nil, nil) }
 
@@ -423,14 +424,22 @@ struct _Text: View, Renderable, Equatable {
             modifier = modifier.applyHStackTextBaselineAlignment(EnvironmentValues.shared._horizontalStackVerticalAlignmentKey)
         }
         var options: Material3TextOptions
-        if let locnode {
+        let isPlaceholder = redaction.contains(RedactionReasons.placeholder)
+        var linkColor = EnvironmentValues.shared._tint?.colorImpl() ?? Color.accentColor.colorImpl()
+        if isPlaceholder {
+            linkColor = linkColor.copy(alpha: linkColor.alpha * Float(Color.placeholderOpacity))
+        }
+        // Markdown and rich text differ only in how the annotated string is built; the
+        // link-tap gesture below is shared.
+        var richAnnotatedText: AnnotatedString? = nil
+        if let richText {
+            let palette = RichTextPalette(link: linkColor, primary: Color.primary.colorImpl(), secondary: Color.secondary.colorImpl(), accent: Color.accentColor.colorImpl())
+            richAnnotatedText = RichText.annotatedString(runs: RichText.runs(from: richText), palette: palette, isUppercased: styleInfo.isUppercased, isLowercased: styleInfo.isLowercased, isRedacted: isPlaceholder)
+        } else if let locnode {
+            richAnnotatedText = annotatedString(markdown: locnode, interpolations: interpolations, linkColor: linkColor, isUppercased: styleInfo.isUppercased, isLowercased: styleInfo.isLowercased, isRedacted: isPlaceholder)
+        }
+        if let annotatedText = richAnnotatedText {
             let layoutResult = remember { mutableStateOf<TextLayoutResult?>(nil) }
-            let isPlaceholder = redaction.contains(RedactionReasons.placeholder)
-            var linkColor = EnvironmentValues.shared._tint?.colorImpl() ?? Color.accentColor.colorImpl()
-            if isPlaceholder {
-                linkColor = linkColor.copy(alpha: linkColor.alpha * Float(Color.placeholderOpacity))
-            }
-            let annotatedText = annotatedString(markdown: locnode, interpolations: interpolations, linkColor: linkColor, isUppercased: styleInfo.isUppercased, isLowercased: styleInfo.isLowercased, isRedacted: isPlaceholder)
             let links = annotatedText.getUrlAnnotations(start: 0, end: annotatedText.length)
             if !links.isEmpty() {
                 let currentText = rememberUpdatedState(annotatedText)
