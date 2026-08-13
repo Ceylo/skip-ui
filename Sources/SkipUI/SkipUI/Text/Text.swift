@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.TextAutoSize
 import skip.foundation.LocalizedStringResource
 import skip.foundation.Bundle
@@ -70,8 +71,8 @@ public struct Text: View, Renderable, Equatable {
     /// not routed through `LocalizedStringKey` either: this is user content, so it must
     /// not be looked up in a bundle or run through `String.format`.
     // SKIP @bridge
-    public init(bridgedRichText: String) {
-        textView = _Text(richText: bridgedRichText)
+    public init(bridgedRichText: String, bridgedInlineViews: [any View]) {
+        textView = _Text(richText: bridgedRichText, richTextInlineViews: bridgedInlineViews)
         modifiedView = textView
     }
 
@@ -364,19 +365,34 @@ struct _Text: View, Renderable, Equatable {
     let attributedString: AttributedString?
     /// An encoded `RichText` payload; see `Text(bridgedRichText:)`.
     let richText: String?
+    /// Views the payload's placeholder runs splice in, in payload order.
+    let richTextInlineViews: [any View]?
     let key: LocalizedStringKey?
     let tableName: String?
     let locale: Locale?
     let bundle: Bundle?
 
-    init(verbatim: String? = nil, attributedString: AttributedString? = nil, richText: String? = nil, key: LocalizedStringKey? = nil, tableName: String? = nil, locale: Locale? = nil, bundle: Bundle? = nil) {
+    init(verbatim: String? = nil, attributedString: AttributedString? = nil, richText: String? = nil, richTextInlineViews: [any View]? = nil, key: LocalizedStringKey? = nil, tableName: String? = nil, locale: Locale? = nil, bundle: Bundle? = nil) {
         self.verbatim = verbatim
         self.attributedString = attributedString
         self.richText = richText
+        self.richTextInlineViews = richTextInlineViews
         self.key = key
         self.tableName = tableName
         self.locale = locale
         self.bundle = bundle
+    }
+
+    // Hand-written because `any View` isn't `Equatable`. The payload string already
+    // changes whenever the inline views do, since it encodes their count and sizes.
+    static func == (lhs: _Text, rhs: _Text) -> Bool {
+        return lhs.verbatim == rhs.verbatim
+            && lhs.attributedString == rhs.attributedString
+            && lhs.richText == rhs.richText
+            && lhs.key == rhs.key
+            && lhs.tableName == rhs.tableName
+            && lhs.locale == rhs.locale
+            && lhs.bundle == rhs.bundle
     }
 
     #if SKIP
@@ -432,9 +448,14 @@ struct _Text: View, Renderable, Equatable {
         // Markdown and rich text differ only in how the annotated string is built; the
         // link-tap gesture below is shared.
         var richAnnotatedText: AnnotatedString? = nil
+        var richInlineContent: kotlin.collections.Map<String, InlineTextContent> = mapOf()
         if let richText {
             let palette = RichTextPalette(link: linkColor, primary: Color.primary.colorImpl(), secondary: Color.secondary.colorImpl(), accent: Color.accentColor.colorImpl())
-            richAnnotatedText = RichText.annotatedString(runs: RichText.runs(from: richText), palette: palette, isUppercased: styleInfo.isUppercased, isLowercased: styleInfo.isLowercased, isRedacted: isPlaceholder)
+            let richTextRuns = RichText.runs(from: richText)
+            richAnnotatedText = RichText.annotatedString(runs: richTextRuns, palette: palette, isUppercased: styleInfo.isUppercased, isLowercased: styleInfo.isLowercased, isRedacted: isPlaceholder)
+            if let richTextInlineViews, !richTextInlineViews.isEmpty {
+                richInlineContent = RichText.inlineContent(runs: richTextRuns, views: richTextInlineViews, context: context)
+            }
         } else if let locnode {
             richAnnotatedText = annotatedString(markdown: locnode, interpolations: interpolations, linkColor: linkColor, isUppercased: styleInfo.isUppercased, isLowercased: styleInfo.isLowercased, isRedacted: isPlaceholder)
         }
@@ -478,7 +499,14 @@ struct _Text: View, Renderable, Equatable {
                     }
                 }
             }
-            options = Material3TextOptions(annotatedText: annotatedText, modifier: modifier, color: styleInfo.color ?? androidx.compose.ui.graphics.Color.Unspecified, maxLines: maxLines, minLines: minLines, style: animatable.value, textDecoration: textDecoration, textAlign: textAlign, onTextLayout: { layoutResult.value = $0 })
+            var annotatedStyle = animatable.value
+            if !richInlineContent.isEmpty() {
+                // Material's typography fixes a line height. An inline placeholder
+                // taller than it — an avatar, say — then overlaps the lines around it
+                // instead of growing its own, so let the content decide the height.
+                annotatedStyle = annotatedStyle.copy(lineHeight: TextUnit.Unspecified)
+            }
+            options = Material3TextOptions(annotatedText: annotatedText, inlineContent: richInlineContent, modifier: modifier, color: styleInfo.color ?? androidx.compose.ui.graphics.Color.Unspecified, maxLines: maxLines, minLines: minLines, style: annotatedStyle, textDecoration: textDecoration, textAlign: textAlign, onTextLayout: { layoutResult.value = $0 })
         } else {
             var text: String
             if let interpolations {
@@ -540,7 +568,7 @@ struct _Text: View, Renderable, Equatable {
             options = updateOptions(options)
         }
         if let annotatedText = options.annotatedText, let onTextLayout = options.onTextLayout {
-            androidx.compose.material3.Text(text: annotatedText, modifier: options.modifier, color: options.color, autoSize: options.autoSize, fontSize: options.fontSize, fontStyle: options.fontStyle, fontWeight: options.fontWeight, fontFamily: options.fontFamily, letterSpacing: options.letterSpacing, textDecoration: options.textDecoration, textAlign: options.textAlign, lineHeight: options.lineHeight, overflow: options.overflow, softWrap: options.softWrap, maxLines: options.maxLines, minLines: options.minLines, onTextLayout: onTextLayout, style: options.style)
+            androidx.compose.material3.Text(text: annotatedText, modifier: options.modifier, color: options.color, autoSize: options.autoSize, fontSize: options.fontSize, fontStyle: options.fontStyle, fontWeight: options.fontWeight, fontFamily: options.fontFamily, letterSpacing: options.letterSpacing, textDecoration: options.textDecoration, textAlign: options.textAlign, lineHeight: options.lineHeight, overflow: options.overflow, softWrap: options.softWrap, maxLines: options.maxLines, minLines: options.minLines, inlineContent: options.inlineContent, onTextLayout: onTextLayout, style: options.style)
         } else {
             androidx.compose.material3.Text(text: options.text ?? "", modifier: options.modifier, color: options.color, autoSize: options.autoSize, fontSize: options.fontSize, fontStyle: options.fontStyle, fontWeight: options.fontWeight, fontFamily: options.fontFamily, letterSpacing: options.letterSpacing, textDecoration: options.textDecoration, textAlign: options.textAlign, lineHeight: options.lineHeight, overflow: options.overflow, softWrap: options.softWrap, maxLines: options.maxLines, minLines: options.minLines, onTextLayout: options.onTextLayout, style: options.style)
         }
@@ -963,6 +991,8 @@ extension View {
 public struct Material3TextOptions {
     public var text: String? = nil
     public var annotatedText: AnnotatedString? = nil
+    /// Compose slots the annotated text's inline placeholders resolve against.
+    public var inlineContent: kotlin.collections.Map<String, InlineTextContent> = mapOf()
     public var modifier: Modifier = Modifier
     public var color: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified
     public var fontSize: TextUnit = TextUnit.Unspecified
@@ -984,6 +1014,7 @@ public struct Material3TextOptions {
     public func copy(
         text: String? = self.text,
         annotatedText: AnnotatedString? = self.annotatedText,
+        inlineContent: kotlin.collections.Map<String, InlineTextContent> = self.inlineContent,
         modifier: Modifier = self.modifier,
         color: androidx.compose.ui.graphics.Color = self.color,
         fontSize: TextUnit = self.fontSize,
@@ -1002,7 +1033,7 @@ public struct Material3TextOptions {
         style: TextStyle = self.style,
         autoSize: TextAutoSize? = self.autoSize
     ) -> Material3TextOptions {
-        return Material3TextOptions(text: text, annotatedText: annotatedText, modifier: modifier, color: color, fontSize: fontSize, fontStyle: fontStyle, fontWeight: fontWeight, fontFamily: fontFamily, letterSpacing: letterSpacing, textDecoration: textDecoration, textAlign: textAlign, lineHeight: lineHeight, overflow: overflow, softWrap: softWrap, maxLines: maxLines, minLines: minLines, onTextLayout: onTextLayout, style: style, autoSize: autoSize)
+        return Material3TextOptions(text: text, annotatedText: annotatedText, inlineContent: inlineContent, modifier: modifier, color: color, fontSize: fontSize, fontStyle: fontStyle, fontWeight: fontWeight, fontFamily: fontFamily, letterSpacing: letterSpacing, textDecoration: textDecoration, textAlign: textAlign, lineHeight: lineHeight, overflow: overflow, softWrap: softWrap, maxLines: maxLines, minLines: minLines, onTextLayout: onTextLayout, style: style, autoSize: autoSize)
     }
 }
 #endif

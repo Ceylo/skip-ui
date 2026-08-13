@@ -3,8 +3,12 @@
 #if !SKIP_BRIDGE
 import Foundation
 #if SKIP
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.ExperimentalTextApi
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.UrlAnnotation
 import androidx.compose.ui.text.font.FontFamily
@@ -30,7 +34,7 @@ struct RichText {
     static func runs(from payload: String) -> [RichTextRun] {
         return payload.components(separatedBy: recordSeparator).compactMap { record in
             let fields = record.components(separatedBy: fieldSeparator)
-            guard fields.count >= 9, !fields[0].isEmpty else { return nil }
+            guard fields.count >= 12, !fields[0].isEmpty else { return nil }
             let decorations = fields[6]
             return RichTextRun(
                 text: fields[0],
@@ -42,7 +46,10 @@ struct RichText {
                 isUnderlined: decorations.contains("u"),
                 isStruckThrough: decorations.contains("s"),
                 baseline: fields[7].isEmpty ? nil : fields[7],
-                link: fields[8].isEmpty ? nil : fields[8]
+                link: fields[8].isEmpty ? nil : fields[8],
+                inlineViewIndex: Int(fields[9]),
+                inlineViewWidth: Double(fields[10]),
+                inlineViewHeight: Double(fields[11])
             )
         }
     }
@@ -69,6 +76,16 @@ struct RichTextRun {
     /// `sub` or `super`.
     let baseline: String?
     let link: String?
+    /// Set when this run is a placeholder for one of the `Text`'s inline views, which
+    /// Compose splices in by id and needs a reserved size for.
+    let inlineViewIndex: Int?
+    let inlineViewWidth: Double?
+    let inlineViewHeight: Double?
+
+    var inlineContentID: String? {
+        guard let inlineViewIndex else { return nil }
+        return "skip.inline.\(inlineViewIndex)"
+    }
 }
 
 #if SKIP
@@ -140,19 +157,48 @@ extension RichText {
             if let link = run.link {
                 builder.pushUrlAnnotation(UrlAnnotation(link))
             }
-            var text = run.text
-            if isUppercased {
-                text = text.uppercased()
-            } else if isLowercased {
-                text = text.lowercased()
+            if let inlineContentID = run.inlineContentID {
+                // The run's own text is the alternate, used when the id has no content.
+                builder.appendInlineContent(inlineContentID, run.text)
+            } else {
+                var text = run.text
+                if isUppercased {
+                    text = text.uppercased()
+                } else if isLowercased {
+                    text = text.lowercased()
+                }
+                builder.append(text)
             }
-            builder.append(text)
             if run.link != nil {
                 builder.pop()
             }
             builder.pop()
         }
         return builder.toAnnotatedString()
+    }
+
+    /// The Compose slots the annotated string's inline placeholders resolve against.
+    static func inlineContent(runs: [RichTextRun], views: [any View], context: ComposeContext) -> kotlin.collections.Map<String, InlineTextContent> {
+        let content = mutableMapOf<String, InlineTextContent>()
+        for run in runs {
+            guard let inlineContentID = run.inlineContentID,
+                  let index = run.inlineViewIndex, index >= 0, index < views.count else {
+                continue
+            }
+            let view = views[index]
+            // `Center`, not `TextCenter`: the `Text*` alignments fit the placeholder
+            // into the text's own vertical bounds, so anything taller than a line —
+            // an avatar, say — spills over the line below instead of growing the line.
+            let placeholder = Placeholder(
+                width: (run.inlineViewWidth ?? 1.0).sp,
+                height: (run.inlineViewHeight ?? 1.0).sp,
+                placeholderVerticalAlign: PlaceholderVerticalAlign.Center
+            )
+            content[inlineContentID] = InlineTextContent(placeholder) { _ in
+                view.Compose(context: context)
+            }
+        }
+        return content
     }
 }
 #endif
