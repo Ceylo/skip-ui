@@ -7,10 +7,14 @@ import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.ExperimentalTextApi
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.LinkInteractionListener
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.UrlAnnotation
+import androidx.compose.ui.text.fromHtml
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.BaselineShift
@@ -186,20 +190,89 @@ extension RichText {
                 continue
             }
             let view = views[index]
-            // `Center`, not `TextCenter`: the `Text*` alignments fit the placeholder
-            // into the text's own vertical bounds, so anything taller than a line —
-            // an avatar, say — spills over the line below instead of growing the line.
-            let placeholder = Placeholder(
-                width: (run.inlineViewWidth ?? 1.0).sp,
-                height: (run.inlineViewHeight ?? 1.0).sp,
-                placeholderVerticalAlign: PlaceholderVerticalAlign.Center
-            )
-            content[inlineContentID] = InlineTextContent(placeholder) { _ in
-                view.Compose(context: context)
-            }
+            content[inlineContentID] = slot(for: view, width: run.inlineViewWidth ?? 1.0, height: run.inlineViewHeight ?? 1.0, context: context)
         }
         return content
     }
+
+    /// The same slots for a `Text(bridgedHTML:)`, whose placeholders are positional:
+    /// the i-th U+FFFC of the parsed markup takes the i-th view.
+    static func inlineContent(views: [any View], widths: [Double], heights: [Double], context: ComposeContext) -> kotlin.collections.Map<String, InlineTextContent> {
+        let content = mutableMapOf<String, InlineTextContent>()
+        for index in 0..<views.count {
+            let width = index < widths.count ? widths[index] : 1.0
+            let height = index < heights.count ? heights[index] : 1.0
+            content[inlineContentID(index)] = slot(for: views[index], width: width, height: height, context: context)
+        }
+        return content
+    }
+
+    private static func slot(for view: any View, width: Double, height: Double, context: ComposeContext) -> InlineTextContent {
+        // `Center`, not `TextCenter`: the `Text*` alignments fit the placeholder
+        // into the text's own vertical bounds, so anything taller than a line —
+        // an avatar, say — spills over the line below instead of growing the line.
+        let placeholder = Placeholder(
+            width: width.sp,
+            height: height.sp,
+            placeholderVerticalAlign: PlaceholderVerticalAlign.Center
+        )
+        return InlineTextContent(placeholder) { _ in
+            view.Compose(context: context)
+        }
+    }
+
+    // MARK: HTML
+
+    /// FA's markup as Compose parses it, with links styled and their taps intercepted.
+    ///
+    /// Without a `LinkInteractionListener` Compose answers a tap with its own
+    /// `UriHandler`, which leaves for the browser before the app can decide whether the
+    /// URL is one it can open itself.
+    static func annotatedString(html: String, linkColor: androidx.compose.ui.graphics.Color, onLinkTap: @escaping (String) -> Void) -> AnnotatedString {
+        let listener = LinkInteractionListener { link in
+            if let url = link as? LinkAnnotation.Url {
+                onLinkTap(url.url)
+            }
+        }
+        return AnnotatedString.fromHtml(
+            html,
+            linkStyles: TextLinkStyles(style: SpanStyle(color: linkColor, textDecoration: TextDecoration.Underline)),
+            linkInteractionListener: listener
+        )
+    }
+
+    /// Rebuilds `parsed` with its first `count` U+FFFC placeholders — the marks
+    /// `fromHtml` leaves where it dropped an `<img>` — turned into inline-content slots.
+    ///
+    /// `append(text:start:end:)` carries the spans of the range with it, so everything
+    /// the parser resolved survives the rebuild.
+    static func splicingInlineContent(_ parsed: AnnotatedString, count: Int) -> AnnotatedString {
+        let builder = AnnotatedString.Builder()
+        var last = 0
+        var offset = 0
+        var index = 0
+        // Transpiled, this iterates UTF-16 code units, which is the unit Compose counts
+        // its offsets in — so an emoji earlier in the text can't shift a placeholder.
+        for character in parsed.text {
+            if character == placeholderCharacter, index < count {
+                builder.append(parsed, last, offset)
+                builder.appendInlineContent(inlineContentID(index), placeholder)
+                index += 1
+                last = offset + 1
+            }
+            offset += 1
+        }
+        builder.append(parsed, last, parsed.length)
+        return builder.toAnnotatedString()
+    }
+
+    static func inlineContentID(_ index: Int) -> String {
+        return "skip.inline.\(index)"
+    }
+
+    /// U+FFFC, the object-replacement character.
+    private static let placeholderCharacter: Character = "\u{FFFC}"
+    private static let placeholder = "\u{FFFC}"
 }
 #endif
 #endif

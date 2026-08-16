@@ -76,6 +76,22 @@ public struct Text: View, Renderable, Equatable {
         modifiedView = textView
     }
 
+    /// Markup rendered by Compose's own HTML parser.
+    ///
+    /// `AnnotatedString.fromHtml` covers weight, emphasis, decoration, baseline, colour,
+    /// headings, lists, links and — unlike a chain of `Text`s — real paragraph alignment.
+    /// It drops `<img>`, but leaves a U+FFFC where each one was, which is exactly the
+    /// marker inline views splice in at: `bridgedInlineViews[i]` replaces the i-th one,
+    /// reserving `bridgedInlineWidths[i]` × `bridgedInlineHeights[i]`.
+    ///
+    /// `bridgedLinkAction` receives a tapped link instead of Compose's own `UriHandler`,
+    /// which would otherwise leave for the browser without the app ever seeing the URL.
+    // SKIP @bridge
+    public init(bridgedHTML: String, bridgedInlineViews: [any View], bridgedInlineWidths: [Double], bridgedInlineHeights: [Double], bridgedLinkAction: ((String) -> Void)?) {
+        textView = _Text(html: bridgedHTML, htmlInlineViews: bridgedInlineViews, htmlInlineWidths: bridgedInlineWidths, htmlInlineHeights: bridgedInlineHeights, htmlLinkAction: bridgedLinkAction)
+        modifiedView = textView
+    }
+
     public init(_ key: LocalizedStringKey, tableName: String? = nil, bundle: Bundle? = Bundle.main, comment: StaticString? = nil) {
         textView = _Text(key: key, tableName: tableName, bundle: bundle)
         modifiedView = textView
@@ -367,16 +383,28 @@ struct _Text: View, Renderable, Equatable {
     let richText: String?
     /// Views the payload's placeholder runs splice in, in payload order.
     let richTextInlineViews: [any View]?
+    /// Markup for `AnnotatedString.fromHtml`; see `Text(bridgedHTML:)`.
+    let html: String?
+    /// Views replacing the U+FFFC `fromHtml` leaves behind for each `<img>`, in order.
+    let htmlInlineViews: [any View]?
+    let htmlInlineWidths: [Double]?
+    let htmlInlineHeights: [Double]?
+    let htmlLinkAction: ((String) -> Void)?
     let key: LocalizedStringKey?
     let tableName: String?
     let locale: Locale?
     let bundle: Bundle?
 
-    init(verbatim: String? = nil, attributedString: AttributedString? = nil, richText: String? = nil, richTextInlineViews: [any View]? = nil, key: LocalizedStringKey? = nil, tableName: String? = nil, locale: Locale? = nil, bundle: Bundle? = nil) {
+    init(verbatim: String? = nil, attributedString: AttributedString? = nil, richText: String? = nil, richTextInlineViews: [any View]? = nil, html: String? = nil, htmlInlineViews: [any View]? = nil, htmlInlineWidths: [Double]? = nil, htmlInlineHeights: [Double]? = nil, htmlLinkAction: ((String) -> Void)? = nil, key: LocalizedStringKey? = nil, tableName: String? = nil, locale: Locale? = nil, bundle: Bundle? = nil) {
         self.verbatim = verbatim
         self.attributedString = attributedString
         self.richText = richText
         self.richTextInlineViews = richTextInlineViews
+        self.html = html
+        self.htmlInlineViews = htmlInlineViews
+        self.htmlInlineWidths = htmlInlineWidths
+        self.htmlInlineHeights = htmlInlineHeights
+        self.htmlLinkAction = htmlLinkAction
         self.key = key
         self.tableName = tableName
         self.locale = locale
@@ -389,6 +417,7 @@ struct _Text: View, Renderable, Equatable {
         return lhs.verbatim == rhs.verbatim
             && lhs.attributedString == rhs.attributedString
             && lhs.richText == rhs.richText
+            && lhs.html == rhs.html
             && lhs.key == rhs.key
             && lhs.tableName == rhs.tableName
             && lhs.locale == rhs.locale
@@ -408,6 +437,9 @@ struct _Text: View, Renderable, Equatable {
     @Composable private func localizedTextInfo() -> (String, MarkdownNode?, kotlin.collections.List<AnyHashable>?) {
         if let verbatim { return (verbatim, nil, nil) }
         if let richText { return (RichText.plainText(from: richText), nil, nil) }
+        // The markup itself, rather than nothing: this feeds nav titles and
+        // accessibility, and `Render` never reaches it for an HTML text anyway.
+        if let html { return (html, nil, nil) }
         if let attributedString { return (attributedString.string, attributedString.markdownNode, nil) }
         guard let key else { return ("", nil, nil) }
 
@@ -449,7 +481,23 @@ struct _Text: View, Renderable, Equatable {
         // link-tap gesture below is shared.
         var richAnnotatedText: AnnotatedString? = nil
         var richInlineContent: kotlin.collections.Map<String, InlineTextContent> = mapOf()
-        if let richText {
+        if let html {
+            let currentLinkAction = rememberUpdatedState(htmlLinkAction)
+            // Parsing is not cheap and `Render` runs on every recomposition, so it is
+            // keyed on the markup — and on the colour, which the styles bake in.
+            let parsed = remember(html, linkColor) {
+                RichText.annotatedString(html: html, linkColor: linkColor, onLinkTap: { url in
+                    currentLinkAction.value?(url)
+                })
+            }
+            let inlineViews = htmlInlineViews ?? []
+            if inlineViews.isEmpty {
+                richAnnotatedText = parsed
+            } else {
+                richAnnotatedText = RichText.splicingInlineContent(parsed, count: inlineViews.count)
+                richInlineContent = RichText.inlineContent(views: inlineViews, widths: htmlInlineWidths ?? [], heights: htmlInlineHeights ?? [], context: context)
+            }
+        } else if let richText {
             let palette = RichTextPalette(link: linkColor, primary: Color.primary.colorImpl(), secondary: Color.secondary.colorImpl(), accent: Color.accentColor.colorImpl())
             let richTextRuns = RichText.runs(from: richText)
             richAnnotatedText = RichText.annotatedString(runs: richTextRuns, palette: palette, isUppercased: styleInfo.isUppercased, isLowercased: styleInfo.isLowercased, isRedacted: isPlaceholder)
