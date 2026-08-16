@@ -58,6 +58,31 @@ struct RichText {
         }
     }
 
+    /// One segment of a `Text + Text`: the record carries the styling, and the text
+    /// comes from the segment's own `Text`, which resolves it at compose time.
+    static func run(from record: String, text: String) -> RichTextRun {
+        let fields = record.components(separatedBy: fieldSeparator)
+        func field(_ index: Int) -> String {
+            return index < fields.count ? fields[index] : ""
+        }
+        let decorations = field(6)
+        return RichTextRun(
+            text: text,
+            fontWeight: Int(field(1)),
+            isItalic: field(2) == "1",
+            isMonospaced: field(3) == "1",
+            fontSize: Double(field(4)),
+            color: field(5).isEmpty ? nil : field(5),
+            isUnderlined: decorations.contains("u"),
+            isStruckThrough: decorations.contains("s"),
+            baseline: field(7).isEmpty ? nil : field(7),
+            link: field(8).isEmpty ? nil : field(8),
+            inlineViewIndex: nil,
+            inlineViewWidth: nil,
+            inlineViewHeight: nil
+        )
+    }
+
     /// The payload's text with all styling dropped.
     static func plainText(from payload: String) -> String {
         return runs(from: payload).map { $0.text }.joined()

@@ -92,6 +92,17 @@ public struct Text: View, Renderable, Equatable {
         modifiedView = textView
     }
 
+    /// The operands of a Fuse `Text + Text`.
+    ///
+    /// Each segment crosses as a fully-formed `Text` so its key, table, bundle and
+    /// locale resolve at compose time exactly as a standalone one's would; the parallel
+    /// `RichText` records — text field empty — say how to style each.
+    // SKIP @bridge
+    public init(bridgedSegments: [any View], bridgedSegmentStyles: [String]) {
+        textView = _Text(segments: bridgedSegments, segmentStyles: bridgedSegmentStyles)
+        modifiedView = textView
+    }
+
     public init(_ key: LocalizedStringKey, tableName: String? = nil, bundle: Bundle? = Bundle.main, comment: StaticString? = nil) {
         textView = _Text(key: key, tableName: tableName, bundle: bundle)
         modifiedView = textView
@@ -390,12 +401,16 @@ struct _Text: View, Renderable, Equatable {
     let htmlInlineWidths: [Double]?
     let htmlInlineHeights: [Double]?
     let htmlLinkAction: ((String) -> Void)?
+    /// The operands of a `Text + Text`, each a `Text`; see `Text(bridgedSegments:)`.
+    let segments: [any View]?
+    /// One `RichText` record per segment, with an empty text field.
+    let segmentStyles: [String]?
     let key: LocalizedStringKey?
     let tableName: String?
     let locale: Locale?
     let bundle: Bundle?
 
-    init(verbatim: String? = nil, attributedString: AttributedString? = nil, richText: String? = nil, richTextInlineViews: [any View]? = nil, html: String? = nil, htmlInlineViews: [any View]? = nil, htmlInlineWidths: [Double]? = nil, htmlInlineHeights: [Double]? = nil, htmlLinkAction: ((String) -> Void)? = nil, key: LocalizedStringKey? = nil, tableName: String? = nil, locale: Locale? = nil, bundle: Bundle? = nil) {
+    init(verbatim: String? = nil, attributedString: AttributedString? = nil, richText: String? = nil, richTextInlineViews: [any View]? = nil, html: String? = nil, htmlInlineViews: [any View]? = nil, htmlInlineWidths: [Double]? = nil, htmlInlineHeights: [Double]? = nil, htmlLinkAction: ((String) -> Void)? = nil, segments: [any View]? = nil, segmentStyles: [String]? = nil, key: LocalizedStringKey? = nil, tableName: String? = nil, locale: Locale? = nil, bundle: Bundle? = nil) {
         self.verbatim = verbatim
         self.attributedString = attributedString
         self.richText = richText
@@ -405,6 +420,8 @@ struct _Text: View, Renderable, Equatable {
         self.htmlInlineWidths = htmlInlineWidths
         self.htmlInlineHeights = htmlInlineHeights
         self.htmlLinkAction = htmlLinkAction
+        self.segments = segments
+        self.segmentStyles = segmentStyles
         self.key = key
         self.tableName = tableName
         self.locale = locale
@@ -418,6 +435,7 @@ struct _Text: View, Renderable, Equatable {
             && lhs.attributedString == rhs.attributedString
             && lhs.richText == rhs.richText
             && lhs.html == rhs.html
+            && lhs.segmentStyles == rhs.segmentStyles
             && lhs.key == rhs.key
             && lhs.tableName == rhs.tableName
             && lhs.locale == rhs.locale
@@ -436,6 +454,16 @@ struct _Text: View, Renderable, Equatable {
 
     @Composable private func localizedTextInfo() -> (String, MarkdownNode?, kotlin.collections.List<AnyHashable>?) {
         if let verbatim { return (verbatim, nil, nil) }
+        if let segments {
+            // A `for` loop, never `map`: `localizedTextString()` is @Composable.
+            var text = ""
+            for segment in segments {
+                if let segmentText = segment as? Text {
+                    text += segmentText.localizedTextString()
+                }
+            }
+            return (text, nil, nil)
+        }
         if let richText { return (RichText.plainText(from: richText), nil, nil) }
         // The markup itself, rather than nothing: this feeds nav titles and
         // accessibility, and `Render` never reaches it for an HTML text anyway.
@@ -481,7 +509,17 @@ struct _Text: View, Renderable, Equatable {
         // link-tap gesture below is shared.
         var richAnnotatedText: AnnotatedString? = nil
         var richInlineContent: kotlin.collections.Map<String, InlineTextContent> = mapOf()
-        if let html {
+        if let segments, let segmentStyles {
+            var segmentRuns: [RichTextRun] = []
+            // A `for` loop, never `map`: `localizedTextString()` is @Composable.
+            for index in 0..<segments.count {
+                guard let segment = segments[index] as? Text else { continue }
+                let style = index < segmentStyles.count ? segmentStyles[index] : ""
+                segmentRuns.append(RichText.run(from: style, text: segment.localizedTextString()))
+            }
+            let palette = RichTextPalette(link: linkColor, primary: Color.primary.colorImpl(), secondary: Color.secondary.colorImpl(), accent: Color.accentColor.colorImpl())
+            richAnnotatedText = RichText.annotatedString(runs: segmentRuns, palette: palette, isUppercased: styleInfo.isUppercased, isLowercased: styleInfo.isLowercased, isRedacted: isPlaceholder)
+        } else if let html {
             let currentLinkAction = rememberUpdatedState(htmlLinkAction)
             // Parsing is not cheap and `Render` runs on every recomposition, so it is
             // keyed on the markup — and on the colour, which the styles bake in.
