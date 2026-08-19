@@ -68,8 +68,11 @@ public struct Font : Hashable {
         adjust(MaterialTheme.typography.titleMedium, by: Float(0.0))
     })
 
+    // bodyMedium rather than the same-metrics titleSmall: iOS's subheadline is
+    // regular-weight secondary body text, not a title, and a Medium 500 stroke reads
+    // heavier than its iOS counterpart at every size. `.callout` already uses it.
     public static let subheadline = Font(fontImpl: {
-        adjust(MaterialTheme.typography.titleSmall, by: Float(0.0))
+        adjust(MaterialTheme.typography.bodyMedium, by: Float(0.0))
     })
 
     public static let body = Font(fontImpl: {
