@@ -586,10 +586,12 @@ struct _Text: View, Renderable, Equatable {
                 }
             }
             var annotatedStyle = animatable.value
-            if !richInlineContent.isEmpty() {
-                // Material's typography fixes a line height. An inline placeholder
-                // taller than it — an avatar, say — then overlaps the lines around it
-                // instead of growing its own, so let the content decide the height.
+            if html != nil || !richInlineContent.isEmpty() {
+                // Material's typography fixes a line height (1.5x), where SwiftUI leaves
+                // multi-line text at font metrics — so HTML bodies read a good deal
+                // looser here than on iOS. And an inline placeholder taller than that
+                // fixed height overlaps the lines around it instead of growing its own.
+                // Both are fixed by letting the content decide the height.
                 annotatedStyle = annotatedStyle.copy(lineHeight: TextUnit.Unspecified)
             }
             options = Material3TextOptions(annotatedText: annotatedText, inlineContent: richInlineContent, modifier: modifier, color: styleInfo.color ?? androidx.compose.ui.graphics.Color.Unspecified, maxLines: maxLines, minLines: minLines, style: annotatedStyle, textDecoration: textDecoration, textAlign: textAlign, onTextLayout: { layoutResult.value = $0 })
