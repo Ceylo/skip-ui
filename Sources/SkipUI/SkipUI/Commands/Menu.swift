@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -155,51 +156,63 @@ public final class Menu : View, Renderable {
     }
 
     @Composable static func RenderDropdownMenuItems(for renderables: kotlin.collections.List<Renderable>, selection: Hashable? = nil, context: ComposeContext, replaceMenu: (Menu?) -> Void) {
-        for renderable in renderables {
-            var stripped = renderable.strip()
-            if let shareLink = stripped as? ShareLink {
-                shareLink.ComposeAction()
-                stripped = shareLink.content
-            } else if let link = stripped as? Link {
-                link.ComposeAction()
-                stripped = link.content
-            }
-            // Accessibility modifiers on a menu item live on the wrapping
-            // `ModifiedContent`, not on `stripped`. Harvest them here so the
-            // resulting Compose `DropdownMenuItem` carries the same test tag
-            // and content description a regular Button would.
-            let itemModifier = accessibilityModifier(for: renderable, context: context)
-            let isItemEnabled = !isDisabled(renderable)
-            if let button = stripped as? Button {
-                let isSelected: Bool?
-                if let tagModifier = TagModifier.on(content: renderable, role: .tag) {
-                    isSelected = tagModifier.value == selection
-                } else {
-                    isSelected = nil
+        // M3 hands a `DropdownMenuItem` `labelLarge` (14sp Medium), well under the body
+        // text a SwiftUI menu item renders at. `Text.styleInfo` reads the environment
+        // font before `LocalTextStyle`, so setting it here restores `bodyLarge` — and
+        // menu icons, which size to the current text style, follow. A `.font()` on an
+        // individual label still wins, being set closer to the `Text`.
+        EnvironmentValues.shared.setValues {
+            $0.setfont(Font.body)
+            return ComposeResult.ok
+        } in: {
+            for renderable in renderables {
+                var stripped = renderable.strip()
+                if let shareLink = stripped as? ShareLink {
+                    shareLink.ComposeAction()
+                    stripped = shareLink.content
+                } else if let link = stripped as? Link {
+                    link.ComposeAction()
+                    stripped = link.content
                 }
-                let tintColor = Color(colorImpl: { button.role == .destructive ? MaterialTheme.colorScheme.error : MaterialTheme.colorScheme.onSurface })
-                RenderDropdownMenuItem(for: button.label, context: context, modifier: itemModifier, tintColor: tintColor, isSelected: isSelected, isEnabled: isItemEnabled) {
-                    button.action()
-                    replaceMenu(nil)
-                }
-            } else if let text = stripped as? Text {
-                DropdownMenuItem(text: { text.Render(context: context) }, onClick: {}, modifier: itemModifier, enabled: false)
-            } else if let section = stripped as? Section {
-                if let header = section.header {
-                    DropdownMenuItem(text: { header.Compose(context: context) }, onClick: {}, modifier: itemModifier, enabled: false)
-                }
-                let sectionRenderables = section.content.Evaluate(context: context, options: 0)
-                RenderDropdownMenuItems(for: sectionRenderables, context: context, replaceMenu: replaceMenu)
-                Divider().Compose(context: context)
-            } else if let menu = stripped as? Menu {
-                if let button = menu.label.Evaluate(context: context, options: 0).firstOrNull()?.strip() as? Button {
-                    RenderDropdownMenuItem(for: button.label, context: context, modifier: itemModifier) {
-                        replaceMenu(menu)
+                // Accessibility modifiers on a menu item live on the wrapping
+                // `ModifiedContent`, not on `stripped`. Harvest them here so the
+                // resulting Compose `DropdownMenuItem` carries the same test tag
+                // and content description a regular Button would.
+                let itemModifier = accessibilityModifier(for: renderable, context: context)
+                let isItemEnabled = !isDisabled(renderable)
+                if let button = stripped as? Button {
+                    let isSelected: Bool?
+                    if let tagModifier = TagModifier.on(content: renderable, role: .tag) {
+                        isSelected = tagModifier.value == selection
+                    } else {
+                        isSelected = nil
                     }
+                    let tintColor = Color(colorImpl: { button.role == .destructive ? MaterialTheme.colorScheme.error : MaterialTheme.colorScheme.onSurface })
+                    RenderDropdownMenuItem(for: button.label, context: context, modifier: itemModifier, tintColor: tintColor, isSelected: isSelected, isEnabled: isItemEnabled) {
+                        button.action()
+                        replaceMenu(nil)
+                    }
+                } else if let text = stripped as? Text {
+                    DropdownMenuItem(text: { text.Render(context: context) }, onClick: {}, modifier: itemModifier, enabled: false)
+                } else if let section = stripped as? Section {
+                    if let header = section.header {
+                        DropdownMenuItem(text: { header.Compose(context: context) }, onClick: {}, modifier: itemModifier, enabled: false)
+                    }
+                    let sectionRenderables = section.content.Evaluate(context: context, options: 0)
+                    RenderDropdownMenuItems(for: sectionRenderables, context: context, replaceMenu: replaceMenu)
+                    RenderMenuDivider()
+                } else if let menu = stripped as? Menu {
+                    if let button = menu.label.Evaluate(context: context, options: 0).firstOrNull()?.strip() as? Button {
+                        RenderDropdownMenuItem(for: button.label, context: context, modifier: itemModifier) {
+                            replaceMenu(menu)
+                        }
+                    }
+                } else if stripped is Divider {
+                    RenderMenuDivider()
+                } else {
+                    // maybe other view types?
+                    renderable.Render(context: context)
                 }
-            } else {
-                // Dividers are also supported... maybe other view types?
-                renderable.Render(context: context)
             }
         }
     }
@@ -242,6 +255,12 @@ public final class Menu : View, Renderable {
             return nil
         }
         return disabled == true
+    }
+
+    /// M3 draws a dropdown's container at elevation 3 — exactly what `Color.separator`
+    /// resolves to — so a plain `Divider` there is the menu's own background.
+    @Composable private static func RenderMenuDivider() {
+        androidx.compose.material3.HorizontalDivider(color: MaterialTheme.colorScheme.outlineVariant)
     }
 
     @Composable private static func RenderDropdownMenuItem(for view: ComposeBuilder, context: ComposeContext, modifier: Modifier = Modifier, tintColor: Color? = nil, isSelected: Bool? = nil, isEnabled: Bool = true, action: () -> Void) {
