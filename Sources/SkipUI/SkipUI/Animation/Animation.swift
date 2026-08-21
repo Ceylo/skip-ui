@@ -4,6 +4,7 @@
 import Foundation
 #if SKIP
 import SkipModel
+import android.os.SystemClock
 import androidx.compose.animation.Animatable
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
@@ -17,6 +18,7 @@ import androidx.compose.animation.core.RepeatableSpec
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.StartOffsetType
+import androidx.compose.animation.core.TargetBasedAnimation
 import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.TwoWayConverter
 import androidx.compose.runtime.Composable
@@ -92,6 +94,45 @@ extension View {
 #if SKIP
 final class AnimationHolder {
     var animation: Animation?
+}
+
+/// What an in-flight value animation needs to pick up where it left off after its composition is
+/// disposed and later re-created — a `List` row scrolled out of the `LazyColumn` window and back.
+///
+/// Lives in a `rememberSaveable` slot, which survives that disposal; the `Animatable` it drives is
+/// a plain `remember` and does not.
+final class AnimationResumeRecord<T> {
+    let animation: Animation
+    let startValue: T
+    let targetValue: T
+    let startUptimeMillis: Int64
+
+    init(animation: Animation, startValue: T, targetValue: T, startUptimeMillis: Int64) {
+        self.animation = animation
+        self.startValue = startValue
+        self.targetValue = targetValue
+        self.startUptimeMillis = startUptimeMillis
+    }
+
+    /// The remainder of this animation as of now, fast-forwarded past the time that elapsed while
+    /// the composition was gone, or nil when it cannot be resumed: the value moved on since the
+    /// record was written, or the animation has already run past its end (in which case the caller
+    /// should snap to the target, as it would have done anyway).
+    func resumedAnimation<VectorT>(target: T, converter: TwoWayConverter<T, VectorT>) -> Animation? where VectorT: AnimationVector {
+        guard targetValue == target else {
+            return nil
+        }
+        let elapsedMillis = SystemClock.uptimeMillis() - startUptimeMillis
+        guard elapsedMillis > Int64(0) else {
+            return animation
+        }
+        // Infinite specs report Long.MAX_VALUE, so they never expire here.
+        let totalNanos = TargetBasedAnimation(animation.asAnimationSpec() as! AnimationSpec<T>, converter, startValue, targetValue, nil).durationNanos
+        guard elapsedMillis * Int64(1_000_000) < totalNanos else {
+            return nil
+        }
+        return animation.fastForwarded(byMillis: Int(elapsedMillis))
+    }
 }
 #endif
 
@@ -345,6 +386,39 @@ public struct Animation : Hashable {
     /// Whether this is an infinite animation.
     public var isInfinite: Bool {
         return spec is InfiniteRepeatableSpec<Any>
+    }
+
+    /// Whether this animation can be restarted part-way through its timeline. Only duration-based
+    /// specs can: a spring has no play time to offset into.
+    var isResumable: Bool {
+        return spec is TweenSpec<Any> || spec is RepeatableSpec<Any> || spec is InfiniteRepeatableSpec<Any>
+    }
+
+    /// A copy of this animation that starts `millis` into its timeline instead of at its beginning,
+    /// so an animation interrupted by composition disposal can resume rather than restart.
+    func fastForwarded(byMillis millis: Int) -> Animation {
+        if let tweenSpec = spec as? TweenSpec<Any> {
+            // A plain tween carries no start offset; a single-iteration repeatable of it does.
+            return Animation(spec: RepeatableSpec(1, tweenSpec, RepeatMode.Restart, StartOffset(millis, StartOffsetType.FastForward)))
+        } else if let repeatableSpec = spec as? RepeatableSpec<Any> {
+            return Animation(spec: RepeatableSpec(repeatableSpec.iterations, repeatableSpec.animation, repeatableSpec.repeatMode, Self.advance(repeatableSpec.initialStartOffset, byMillis: millis)))
+        } else if let repeatableSpec = spec as? InfiniteRepeatableSpec<Any> {
+            return Animation(spec: InfiniteRepeatableSpec(repeatableSpec.animation, repeatableSpec.repeatMode, Self.advance(repeatableSpec.initialStartOffset, byMillis: millis)))
+        } else {
+            return self // Cannot fast forward
+        }
+    }
+
+    /// `offset` moved `millis` further along the timeline: a pending delay is consumed first, and
+    /// whatever is left over fast-forwards into the animation proper.
+    private static func advance(_ offset: StartOffset, byMillis millis: Int) -> StartOffset {
+        let signedMillis = offset.offsetType == StartOffsetType.Delay ? -offset.offsetMillis : offset.offsetMillis
+        let advancedMillis = signedMillis + millis
+        if advancedMillis >= 0 {
+            return StartOffset(advancedMillis, StartOffsetType.FastForward)
+        } else {
+            return StartOffset(-advancedMillis, StartOffsetType.Delay)
+        }
     }
 
     init(spec: AnimationSpec<Any>, delay: Double = 0.0, speed: Double = 1.0) {
@@ -616,24 +690,27 @@ public enum AnimationCompletionCriteria : Hashable {
 /// Animatable plumbing for values that resolve during the render pass (no per-slot provenance):
 /// uses `Animation.current(isAnimating:)`, which includes the recent-withAnimation marker fallback.
 @Composable func toAnimatable<T, VectorT>(value: T, converter: TwoWayConverter<T, VectorT>, context: ComposeContext) -> Animatable<T, VectorT> where T: Any, VectorT: AnimationVector {
-    // In order to reset infinite animations after exiting and coming back to a composition, we have to remember its initial
-    // value, because the powering state value will be at its target when we return to the composition
+    // A composition can be disposed mid-animation and re-created later - a `List` row leaving the
+    // `LazyColumn` window and coming back. The `Animatable` below does not survive that, and neither
+    // does the state change that powered the animation: the powering value is already at its target
+    // when we return. The record does survive, and carries what it takes to resume from where we were.
     // SKIP NOWARN
-    let resetValue = rememberSaveable(stateSaver: context.stateSaver as Saver<T?, Any>) { mutableStateOf<T?>(nil) }
-    let animatable = remember { Animatable(resetValue.value ?? value, converter) }
+    let resumeRecord = rememberSaveable(stateSaver: context.stateSaver as Saver<AnimationResumeRecord<T>?, Any>) { mutableStateOf<AnimationResumeRecord<T>?>(nil) }
+    let animatable = remember { Animatable(resumeRecord.value?.startValue ?? value, converter) }
     let isAnimating = animatable.isRunning || animatable.value != animatable.targetValue
-    if isAnimating || animatable.value != value {
+    if isAnimating || animatable.value != value || resumeRecord.value != nil {
         let animation = Animation.current(isAnimating: isAnimating)
         LaunchedEffect(value, animation) {
             if let animation {
-                if animation.isInfinite {
-                    resetValue.value = animatable.value // Remember infinite animation start value
-                } else {
-                    resetValue.value = nil
-                }
+                // Cancellation - i.e. disposal - skips the clear below, leaving the record for the next composition
+                resumeRecord.value = animation.isResumable ? AnimationResumeRecord(animation: animation, startValue: animatable.value, targetValue: value, startUptimeMillis: SystemClock.uptimeMillis()) : nil
                 animatable.animateTo(value, animationSpec: animation.asAnimationSpec() as! AnimationSpec<T>)
+                resumeRecord.value = nil
+            } else if let resumedAnimation = resumeRecord.value?.resumedAnimation(target: value, converter: converter) {
+                animatable.animateTo(value, animationSpec: resumedAnimation.asAnimationSpec() as! AnimationSpec<T>)
+                resumeRecord.value = nil
             } else {
-                resetValue.value = nil
+                resumeRecord.value = nil
                 animatable.snapTo(value)
             }
         }
@@ -644,22 +721,23 @@ public enum AnimationCompletionCriteria : Hashable {
 /// Animatable plumbing for modifiers that capture provenance at entry: `animTx` carries the
 /// per-slot transaction (or nil → snap); the marker fallback is NOT consulted.
 @Composable func toAnimatable<T, VectorT>(value: T, converter: TwoWayConverter<T, VectorT>, context: ComposeContext, animTx: StateMutationTransaction?) -> Animatable<T, VectorT> where T: Any, VectorT: AnimationVector {
+    // Kept in sync with the render-path overload above; see there for what the resume record is for.
     // SKIP NOWARN
-    let resetValue = rememberSaveable(stateSaver: context.stateSaver as Saver<T?, Any>) { mutableStateOf<T?>(nil) }
-    let animatable = remember { Animatable(resetValue.value ?? value, converter) }
+    let resumeRecord = rememberSaveable(stateSaver: context.stateSaver as Saver<AnimationResumeRecord<T>?, Any>) { mutableStateOf<AnimationResumeRecord<T>?>(nil) }
+    let animatable = remember { Animatable(resumeRecord.value?.startValue ?? value, converter) }
     let isAnimating = animatable.isRunning || animatable.value != animatable.targetValue
-    if isAnimating || animatable.value != value {
+    if isAnimating || animatable.value != value || resumeRecord.value != nil {
         let animation = Animation.current(isAnimating: isAnimating, animTx: animTx)
         LaunchedEffect(value, animation) {
             if let animation {
-                if animation.isInfinite {
-                    resetValue.value = animatable.value // Remember infinite animation start value
-                } else {
-                    resetValue.value = nil
-                }
+                resumeRecord.value = animation.isResumable ? AnimationResumeRecord(animation: animation, startValue: animatable.value, targetValue: value, startUptimeMillis: SystemClock.uptimeMillis()) : nil
                 animatable.animateTo(value, animationSpec: animation.asAnimationSpec() as! AnimationSpec<T>)
+                resumeRecord.value = nil
+            } else if let resumedAnimation = resumeRecord.value?.resumedAnimation(target: value, converter: converter) {
+                animatable.animateTo(value, animationSpec: resumedAnimation.asAnimationSpec() as! AnimationSpec<T>)
+                resumeRecord.value = nil
             } else {
-                resetValue.value = nil
+                resumeRecord.value = nil
                 animatable.snapTo(value)
             }
         }
