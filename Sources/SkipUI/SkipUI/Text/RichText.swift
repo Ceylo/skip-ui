@@ -281,7 +281,20 @@ extension RichText {
         for character in parsed.text {
             if character == placeholderCharacter, index < count {
                 builder.append(parsed, last, offset)
+                // `append(text:start:end:)` clips every annotation to the range it copies,
+                // and the placeholder is appended separately — so an image inside an `<a>`
+                // would come back bare. FA puts an avatar and the name it belongs to in one
+                // anchor, of which only the name would then be tappable.
+                var pushed = 0
+                for link in parsed.getLinkAnnotations(offset, offset + 1) {
+                    builder.pushLink(link.item)
+                    pushed += 1
+                }
                 builder.appendInlineContent(inlineContentID(index), placeholder)
+                while pushed > 0 {
+                    builder.pop()
+                    pushed -= 1
+                }
                 index += 1
                 last = offset + 1
             }
