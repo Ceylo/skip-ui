@@ -63,7 +63,14 @@ public struct ScrollView : View, Renderable {
         var scrollModifier: Modifier = Modifier
         var effectiveScrollAxes: Axis.Set = []
         if wantsVerticalScroll {
-            scrollModifier = scrollModifier.verticalScroll(scrollState, enabled: !isScrollDisabled)
+            // Fill the scrolled axis before making it scrollable: the scrollable node is
+            // the only thing that dispatches nested-scroll deltas, and `.refreshable`'s
+            // `pullRefresh` is driven entirely by those. A content-sized column would take
+            // the pull only over the content, where a UIScrollView takes it over its whole
+            // frame — and a fling started past short content would be ignored outright.
+            // Taller-than-viewport content is unaffected: `verticalScroll` still measures
+            // with maxHeight = Infinity and coerces its own size into the constraint.
+            scrollModifier = scrollModifier.fillMaxHeight().verticalScroll(scrollState, enabled: !isScrollDisabled)
             effectiveScrollAxes.insert(Axis.Set.vertical)
             if !axes.contains(.horizontal) && !isScrollDisabled {
                 // Integrate with our scroll-to-top navigation bar taps
@@ -75,7 +82,8 @@ public struct ScrollView : View, Renderable {
             }
         }
         if wantsHorizontalScroll {
-            scrollModifier = scrollModifier.horizontalScroll(scrollState, enabled: !isScrollDisabled)
+            // Same as above, for the horizontal axis.
+            scrollModifier = scrollModifier.fillMaxWidth().horizontalScroll(scrollState, enabled: !isScrollDisabled)
             effectiveScrollAxes.insert(Axis.Set.horizontal)
         }
 
