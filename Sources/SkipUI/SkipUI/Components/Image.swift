@@ -17,6 +17,8 @@ import androidx.compose.material.icons.twotone.__
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.paint
@@ -25,11 +27,13 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isUnspecified
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.graphics.painter.Painter
@@ -45,16 +49,112 @@ import androidx.compose.ui.layout.ScaleFactor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImagePainter
 import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.rememberAsyncImagePainter
 import coil3.compose.rememberConstraintsSizeResolver
 import coil3.request.ImageRequest
+import kotlin.math.roundToInt
 #elseif canImport(CoreGraphics)
 import struct CoreGraphics.CGFloat
 import struct CoreGraphics.CGRect
 import struct CoreGraphics.CGSize
+#endif
+
+/// A mutable image that a composed ``Image`` reads in Compose's **draw** phase.
+///
+/// A SwiftUI `Image` is a value, so the bitmap it draws can only reach the screen through
+/// a recomposition. An image that becomes available *after* a composition has been applied
+/// — from `onAppear`, which compiles to a Compose `SideEffect`, or from a download
+/// completing — therefore cannot be painted in the frame that composition belongs to, and
+/// the view spends a frame drawing nothing.
+///
+/// A holder is a *reference* the composed node keeps. Writing to it repaints without
+/// recomposing, so an image resolved at any point before the frame is drawn is painted in
+/// **that** frame, and a node that already draws its image never has to be swapped in for
+/// a placeholder. It is the shape Coil gives Compose with `AsyncImagePainter`, whose
+/// documented behaviour is that its state "will always be `State.Empty` for the first
+/// composition … even if the image is present in the memory cache and it will be drawn in
+/// the first frame".
+///
+/// Set the image from the main thread.
+// SKIP @bridge
+public class ImageHolder {
+    #if SKIP
+    /// Read in the draw phase by ``ImageHolderPainter`` and in the layout phase for the
+    /// intrinsic size — never during composition, which is the whole point.
+    let bitmapState: MutableState<Bitmap?> = mutableStateOf(nil)
+    #endif
+
+    // SKIP @bridge
+    public init() {
+    }
+
+    /// The image to draw, or `nil` to draw nothing.
+    // SKIP @bridge
+    public func setImage(_ image: UIImage?) {
+        #if SKIP
+        bitmapState.value = image?.bitmap
+        #endif
+    }
+}
+
+#if SKIP
+/// Draws whatever its ``ImageHolder`` holds, read in the draw phase.
+final class ImageHolderPainter : Painter {
+    private let holder: ImageHolder
+    private var alpha = Float(1.0)
+    private var colorFilter: ColorFilter? = nil
+    private var cachedBitmap: Bitmap? = nil
+    private var cachedImage: ImageBitmap? = nil
+
+    init(holder: ImageHolder) {
+        self.holder = holder
+    }
+
+    override var intrinsicSize: Size {
+        guard let bitmap = holder.bitmapState.value else {
+            return Size.Unspecified
+        }
+        return Size(Float(bitmap.width), Float(bitmap.height))
+    }
+
+    override func applyAlpha(alpha: Float) -> Bool {
+        self.alpha = alpha
+        return true
+    }
+
+    override func applyColorFilter(colorFilter: ColorFilter?) -> Bool {
+        self.colorFilter = colorFilter
+        return true
+    }
+
+    // SKIP DECLARE: override fun DrawScope.onDraw()
+    override func onDraw() {
+        guard let bitmap = holder.bitmapState.value else {
+            return
+        }
+        if cachedBitmap !== bitmap {
+            cachedBitmap = bitmap
+            cachedImage = bitmap.asImageBitmap()
+        }
+        guard let image = cachedImage else {
+            return
+        }
+        drawImage(
+            image: image,
+            srcOffset: IntOffset.Zero,
+            srcSize: IntSize(image.width, image.height),
+            dstOffset: IntOffset.Zero,
+            dstSize: IntSize(size.width.roundToInt(), size.height.roundToInt()),
+            alpha: alpha,
+            colorFilter: colorFilter
+        )
+    }
+}
 #endif
 
 // SKIP @bridge
@@ -72,6 +172,7 @@ public struct Image : View, Renderable, Equatable {
         #if SKIP
         case bitmap(bitmap: Bitmap, scale: CGFloat)
         case painter(painter: Painter, scale: CGFloat)
+        case holder(holder: ImageHolder, scale: CGFloat)
         #endif
     }
 
@@ -102,6 +203,16 @@ public struct Image : View, Renderable, Equatable {
         }
     }
 
+    /// An image whose bitmap is read in Compose's draw phase — see ``ImageHolder``.
+    // SKIP @bridge
+    public init(bridgedHolder: ImageHolder) {
+        #if SKIP
+        self.image = .holder(holder: bridgedHolder, scale: 1.0)
+        #else
+        fatalError()
+        #endif
+    }
+
     // SKIP @bridge
     public init(uiImage: UIImage) {
         #if SKIP
@@ -127,6 +238,8 @@ public struct Image : View, Renderable, Equatable {
                 RenderBitmap(bitmap: bitmap, scale: scale, aspectRatio: aspect?.0, contentMode: aspect?.1, context: context)
             case .painter(let painter, let scale):
                 RenderPainter(painter: painter, scale: scale, aspectRatio: aspect?.0, contentMode: aspect?.1, context: context)
+            case .holder(let holder, let scale):
+                RenderHolder(holder: holder, scale: scale, aspectRatio: aspect?.0, contentMode: aspect?.1, context: context)
             case .system(let systemName):
                 RenderSystem(systemName: systemName, aspectRatio: aspect?.0, contentMode: aspect?.1, context: context)
             case .named(let name, let bundle, let label):
@@ -425,13 +538,45 @@ public struct Image : View, Renderable, Equatable {
                 }
                 androidx.compose.foundation.Image(painter: painter, modifier: modifier, contentDescription: nil, contentScale: ContentScale.FillBounds, colorFilter: colorFilter)
             } else {
-                ImageLayout(intrinsicWidth: painter.intrinsicSize.width, intrinsicHeight: painter.intrinsicSize.height, aspectRatio: aspectRatio, contentMode: contentMode) {
+                ImageLayout(intrinsicSize: { painter.intrinsicSize }, aspectRatio: aspectRatio, contentMode: contentMode) {
                     androidx.compose.foundation.Image(painter: painter, contentDescription: nil, contentScale: ContentScale.FillBounds, colorFilter: colorFilter)
                 }
             }
         default: // TODO: .tile
             let modifier = Modifier.wrapContentSize(unbounded: true).size((painter.intrinsicSize.width / scale).dp, (painter.intrinsicSize.height / scale).dp)
             androidx.compose.foundation.Image(painter: painter, contentDescription: nil, modifier: modifier, colorFilter: colorFilter)
+        }
+    }
+
+    /// Renders an ``ImageHolder``: one node, composed once, whose bitmap is read in the
+    /// draw phase and whose size is resolved in the layout phase. Unlike every other case
+    /// here nothing about the image is read during composition, so one that arrives after
+    /// this composition was applied is still painted in its own frame.
+    @Composable private func RenderHolder(holder: ImageHolder, scale: CGFloat, aspectRatio: Double?, contentMode: ContentMode?, context: ComposeContext) {
+        let painter = remember(holder) { ImageHolderPainter(holder: holder) }
+        let isPlaceholder = EnvironmentValues.shared.redactionReasons.contains(.placeholder)
+        var templateColor: androidx.compose.ui.graphics.Color?
+        if self.templateRenderingMode == .template {
+            templateColor = EnvironmentValues.shared._foregroundStyle?.asColor(opacity: 1.0, animationContext: context)
+        }
+        let colorFilter: ColorFilter?
+        if let tintColor = templateColor {
+            colorFilter = isPlaceholder ? placeholderColorFilter(color: tintColor.copy(alpha: Float(Color.placeholderOpacity))) : ColorFilter.tint(tintColor)
+        } else if isPlaceholder {
+            colorFilter = placeholderColorFilter(color: Color.placeholder.colorImpl())
+        } else {
+            colorFilter = nil
+        }
+
+        switch resizingMode {
+        case .stretch:
+            ImageLayout(intrinsicSize: { painter.intrinsicSize }, aspectRatio: aspectRatio, contentMode: contentMode) {
+                androidx.compose.foundation.Image(painter: painter, contentDescription: nil, contentScale: ContentScale.FillBounds, colorFilter: colorFilter)
+            }
+        default: // TODO: .tile
+            // Not resizable: `Modifier.paint` sizes the node from the painter's intrinsic
+            // size during layout, so this stays phase-correct too.
+            Box(modifier: Modifier.wrapContentSize(unbounded: true).paint(painter, colorFilter: colorFilter))
         }
     }
 
@@ -1014,7 +1159,10 @@ private let symbolXMLCache : [URL: [SymbolSize: SymbolInfo]] = [:]
 private let assetImageCache: [AssetKey: AssetImageInfo?] = [:]
 private let contentsCache: [AssetKey: URL?] = [:]
 
-@Composable private func ImageLayout(intrinsicWidth: Float, intrinsicHeight: Float, aspectRatio: Double?, contentMode: ContentMode?, image: @Composable () -> Void) {
+/// `intrinsicSize` is a closure so that it is read in the **layout** phase. A painter whose
+/// image arrives after this composition — see ``ImageHolder`` — then lays out in the frame
+/// it arrives in rather than in the recomposition after it.
+@Composable private func ImageLayout(intrinsicSize: () -> Size, aspectRatio: Double?, contentMode: ContentMode?, image: @Composable () -> Void) {
     Layout(content = {
         image()
     }) { measurables, constraints in
@@ -1022,12 +1170,17 @@ private let contentsCache: [AssetKey: URL?] = [:]
             return layout(width: 0, height: 0) {}
         }
 
-        let ratio = aspectRatio ?? Double(intrinsicWidth / intrinsicHeight)
+        let intrinsic = intrinsicSize()
+        // No ratio to honor yet (a holder with no image): take whatever space is offered,
+        // exactly as the `fillSize()` branch in `RenderPainter` does.
+        let hasIntrinsicRatio = !intrinsic.isUnspecified && intrinsic.height > Float(0)
+        let hasRatio = aspectRatio != nil || hasIntrinsicRatio
+        let ratio = aspectRatio ?? (hasIntrinsicRatio ? Double(intrinsic.width / intrinsic.height) : Double(1.0))
         let placeable: Placeable
         let width: Int
         let height: Int
         if constraints.hasBoundedWidth && constraints.maxWidth > 0 && constraints.hasBoundedHeight && constraints.maxHeight > 0 {
-            if contentMode == nil {
+            if contentMode == nil || !hasRatio {
                 height = constraints.maxHeight
                 width = constraints.maxWidth
             } else {
