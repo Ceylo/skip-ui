@@ -4,9 +4,7 @@
 import Foundation
 #if SKIP
 import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.EaseInOutBack
 import androidx.compose.animation.core.SpringSpec
-import androidx.compose.animation.core.TweenSpec
 #endif
 
 // SKIP @bridge
@@ -18,12 +16,19 @@ public struct Spring : Hashable {
     public func asAnimationSpec() -> AnimationSpec<Any> {
         return animationSpec
     }
+
+    /// A unit mass whose undamped period is `response`.
+    private static func springSpec(response: Double, dampingRatio: Double) -> AnimationSpec<Any> {
+        let angularFrequency = 2.0 * Double.pi / response
+        return SpringSpec(dampingRatio: Float(dampingRatio), stiffness: Float(angularFrequency * angularFrequency))
+    }
     #endif
 
     // SKIP @bridge
     public init(duration: TimeInterval = 0.5, bounce: Double = 0.0) {
         #if SKIP
-        animationSpec = TweenSpec(durationMillis: Int(duration * 1000.0), easing: EaseInOutBack)
+        // SwiftUI's own mapping: `duration` is the response, and bounce trades against damping.
+        animationSpec = Self.springSpec(response: duration, dampingRatio: bounce >= 0.0 ? 1.0 - bounce : 1.0 / (1.0 + bounce))
         #endif
     }
 
@@ -40,7 +45,7 @@ public struct Spring : Hashable {
     // SKIP @bridge
     public init(response: Double, dampingRatio: Double) {
         #if SKIP
-        animationSpec = TweenSpec(durationMillis: Int(response * 1000.0), easing: EaseInOutBack)
+        animationSpec = Self.springSpec(response: response, dampingRatio: dampingRatio)
         #endif
     }
 
@@ -80,7 +85,9 @@ public struct Spring : Hashable {
     // SKIP @bridge
     public init(settlingDuration: TimeInterval, dampingRatio: Double, epsilon: Double = 0.001) {
         #if SKIP
-        animationSpec = TweenSpec(durationMillis: Int(settlingDuration * 1000.0), easing: EaseInOutBack)
+        // The envelope e^(-ζωt) decays to `epsilon` at `settlingDuration`.
+        let angularFrequency = -log(epsilon) / (dampingRatio * settlingDuration)
+        animationSpec = SpringSpec(dampingRatio: Float(dampingRatio), stiffness: Float(angularFrequency * angularFrequency))
         #endif
     }
 
@@ -106,7 +113,7 @@ public struct Spring : Hashable {
 
     // SKIP @bridge
     public static func snappy(duration: TimeInterval = 0.5, extraBounce: Double = 0.0) -> Spring {
-        return Spring(duration: duration, bounce: extraBounce)
+        return Spring(duration: duration, bounce: 0.15 + extraBounce)
     }
 
     // SKIP @bridge
@@ -116,7 +123,7 @@ public struct Spring : Hashable {
 
     // SKIP @bridge
     public static func bouncy(duration: TimeInterval = 0.5, extraBounce: Double = 0.0) -> Spring {
-        return Spring(duration: duration, bounce: extraBounce)
+        return Spring(duration: duration, bounce: 0.3 + extraBounce)
     }
 }
 

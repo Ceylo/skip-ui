@@ -16,6 +16,7 @@ import androidx.compose.animation.core.DurationBasedAnimationSpec
 import androidx.compose.animation.core.InfiniteRepeatableSpec
 import androidx.compose.animation.core.RepeatableSpec
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.SpringSpec
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.StartOffsetType
 import androidx.compose.animation.core.TargetBasedAnimation
@@ -389,7 +390,7 @@ public struct Animation : Hashable {
     }
 
     /// Whether this animation can be restarted part-way through its timeline. Only duration-based
-    /// specs can: a spring has no play time to offset into.
+    /// specs can: a spring, delayed or not, has no play time to offset into.
     var isResumable: Bool {
         return spec is TweenSpec<Any> || spec is RepeatableSpec<Any> || spec is InfiniteRepeatableSpec<Any>
     }
@@ -627,6 +628,8 @@ public struct Animation : Hashable {
             return Animation(spec: RepeatableSpec(repeatableSpec.iterations, repeatableSpec.animation, repeatableSpec.repeatMode, StartOffset(Int(delay * 1000.0), StartOffsetType.Delay)))
         } else if let repeatableSpec = spec as? InfiniteRepeatableSpec<Any> {
             return Animation(spec: InfiniteRepeatableSpec(repeatableSpec.animation, repeatableSpec.repeatMode, StartOffset(Int(delay * 1000.0), StartOffsetType.Delay)))
+        } else if let springSpec = spec as? SpringSpec<Any> {
+            return Animation(spec: DelayedAnimationSpec(Int(delay * 1000.0), springSpec))
         } else {
             return self // Cannot delay
         }
@@ -646,6 +649,10 @@ public struct Animation : Hashable {
         } else if let repeatableSpec = spec as? InfiniteRepeatableSpec<Any>, let tweenSpec = repeatableSpec.animation as? TweenSpec<Any> {
             let speedSpec = TweenSpec<Any>(Int(tweenSpec.durationMillis / speed), tweenSpec.delay, tweenSpec.easing)
             return Animation(spec: InfiniteRepeatableSpec(speedSpec, repeatableSpec.repeatMode, repeatableSpec.initialStartOffset))
+        } else if let springSpec = spec as? SpringSpec<Any> {
+            return Animation(spec: Self.speedSpring(springSpec, speed))
+        } else if let delayedSpec = spec as? DelayedAnimationSpec<Any>, let springSpec = delayedSpec.animation as? SpringSpec<Any> {
+            return Animation(spec: DelayedAnimationSpec(delayedSpec.delayMillis, Self.speedSpring(springSpec, speed)))
         } else {
             return self // Cannot delay
         }
@@ -653,6 +660,16 @@ public struct Animation : Hashable {
         fatalError()
         #endif
     }
+
+    #if SKIP
+    /// Time scales as 1/√stiffness at a fixed damping ratio.
+    private static func speedSpring(_ springSpec: SpringSpec<Any>, _ speed: Double) -> SpringSpec<Any> {
+        return SpringSpec(springSpec.dampingRatio, springSpec.stiffness * Float(speed * speed), springSpec.visibilityThreshold)
+    }
+    #endif
+
+    // Compose can only repeat a duration-based spec, so a spring ignores both of these, as
+    // `interpolatingSpring` always has.
 
     // SKIP @bridge
     public func repeatCount(_ repeatCount: Int, autoreverses: Bool = true) -> Animation {
