@@ -1676,7 +1676,7 @@ final class TagModifier: RenderModifier {
     static let defaultIdValue = "<TagModifier.defaultIdValue>"
 
     let value: Any?
-    var stateSaver: ComposeStateSaver?
+    private var idGeneration = 0
 
     init(value: Any?, role: ModifierRole) {
         self.value = value
@@ -1684,44 +1684,49 @@ final class TagModifier: RenderModifier {
     }
 
     @Composable override func Evaluate(content: View, context: ComposeContext, options: Int) -> kotlin.collections.List<Renderable>? {
-        if let stateSaver = Self.IdStateSaver(for: context, role: role, value: value) {
-            self.stateSaver = stateSaver
-            var context = context
-            context.stateSaver = stateSaver
-            // Use key() to reset remembered values that do not use the state saver
-            return androidx.compose.runtime.key(value ?? Self.defaultIdValue) {
-                return super.Evaluate(content: content, context: context, options: options)
-            }
-        } else {
-            self.stateSaver = nil
+        guard role == .id else {
+            return super.Evaluate(content: content, context: context, options: options)
+        }
+        let idValue = value ?? Self.defaultIdValue
+        idGeneration = Self.IdGeneration(for: context, idValue: idValue)
+        return androidx.compose.runtime.key(idValue, idGeneration) {
             return super.Evaluate(content: content, context: context, options: options)
         }
     }
 
     @Composable override func Render(content: Renderable, context: ComposeContext) -> Void {
-        if let stateSaver {
-            var context = context
-            context.stateSaver = stateSaver
-            androidx.compose.runtime.key(value ?? Self.defaultIdValue) {
-                super.Render(content: content, context: context)
-            }
-        } else {
+        guard role == .id else {
+            super.Render(content: content, context: context)
+            return
+        }
+        androidx.compose.runtime.key(value ?? Self.defaultIdValue, idGeneration) {
             super.Render(content: content, context: context)
         }
     }
 
-    @Composable private static func IdStateSaver(for context: ComposeContext, role: ModifierRole, value: Any?) -> ComposeStateSaver? {
-        guard role == .id else {
-            return nil
-        }
-        // Reset the state saver when the id value changes
-        let idValue = value ?? Self.defaultIdValue
-        let rememberedId = rememberSaveable(stateSaver: context.stateSaver as! Saver<Any, Any>) { mutableStateOf(idValue) }
+    /// The number of times the id value has changed at this position, used to distinguish
+    /// successive incarnations of the same id.
+    ///
+    /// The id is the movable group's data key and so part of the composite key hash, which is what
+    /// `rememberSaveable` keys on: a new id already resets both `remember` and `rememberSaveable`
+    /// state. It is not enough on its own, because an id that *returns* to an earlier value
+    /// reproduces that value's key, and the registry re-emits entries nobody consumed on every
+    /// save. Keying on the generation as well makes each incarnation positionally distinct.
+    ///
+    /// Note that handing the subtree a fresh `ComposeStateSaver` instead does not work: a saved
+    /// `ComposeStateSaver.Key` only resolves in the saver that minted it, so a descendant
+    /// restoring a stale entry against a new saver gets nil for a value that cannot be nil.
+    @Composable private static func IdGeneration(for context: ComposeContext, idValue: Any) -> Int {
+        // Typed `Any?` because a restore can return nil - a non-Bundle id does after process
+        // death - and that must count as a change rather than fail an unwrap.
+        let rememberedId = rememberSaveable(stateSaver: context.stateSaver as! Saver<Any?, Any>) { mutableStateOf<Any?>(idValue) }
+        let generation = rememberSaveable(stateSaver: context.stateSaver as! Saver<Int, Any>) { mutableStateOf(0) }
         guard rememberedId.value != idValue else {
-            return context.stateSaver as? ComposeStateSaver
+            return generation.value
         }
         rememberedId.value = idValue
-        return ComposeStateSaver()
+        generation.value += 1
+        return generation.value
     }
 
     /// Extract the existing tag modifier view from the given view's modifiers.
