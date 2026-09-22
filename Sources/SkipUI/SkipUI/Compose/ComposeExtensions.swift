@@ -14,7 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -127,11 +127,19 @@ extension Modifier {
     }
 
     /// Invoke the given closure with the modified view's root bounds.
+    ///
+    /// From `size` and `positionInRoot()`, not `boundsInRoot()`: that is
+    /// `localBoundingBoxOf(this, clipBounds = true)`, intersected with every clipping
+    /// ancestor, so a partially scrolled `LazyColumn` row reports a shrinking size and an
+    /// origin pinned to the viewport edge. SwiftUI reports a view's laid-out frame whatever
+    /// is scrolled over it, and lets the origin go negative.
     @Composable func onGloballyPositionedInRoot(perform: (Rect) -> Void) -> Modifier {
         return self.onGloballyPositioned {
-            let bounds = $0.boundsInRoot()
-            if bounds != Rect.Zero {
-                perform(bounds)
+            let size = $0.size
+            // Zero until measured; an off-screen node still reports its real frame.
+            if size.width > 0 && size.height > 0 {
+                let origin = $0.positionInRoot()
+                perform(Rect(left: origin.x, top: origin.y, right: origin.x + Float(size.width), bottom: origin.y + Float(size.height)))
             }
         }
     }
