@@ -5,6 +5,7 @@ import Foundation
 #if SKIP
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material.ContentAlpha
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.DropdownMenu
@@ -187,7 +188,11 @@ public final class Menu : View, Renderable {
                     } else {
                         isSelected = nil
                     }
-                    let tintColor = Color(colorImpl: { button.role == .destructive ? MaterialTheme.colorScheme.error : MaterialTheme.colorScheme.onSurface })
+                    var tintColor = Color(colorImpl: { button.role == .destructive ? MaterialTheme.colorScheme.error : MaterialTheme.colorScheme.onSurface })
+                    if !isItemEnabled {
+                        // The explicit tint overrides DropdownMenuItem's own disabled colors
+                        tintColor = tintColor.opacity(Double(ContentAlpha.disabled))
+                    }
                     RenderDropdownMenuItem(for: button.label, context: context, modifier: itemModifier, tintColor: tintColor, isSelected: isSelected, isEnabled: isItemEnabled) {
                         button.action()
                         replaceMenu(nil)
@@ -204,7 +209,8 @@ public final class Menu : View, Renderable {
                 } else if let menu = stripped as? Menu {
                     if let button = menu.label.Evaluate(context: context, options: 0).firstOrNull()?.strip() as? Button {
                         RenderDropdownMenuItem(for: button.label, context: context, modifier: itemModifier) {
-                            replaceMenu(menu)
+                            // As in SwiftUI, a disabled nested menu still opens, with all of its items disabled
+                            replaceMenu(isItemEnabled ? menu : Menu(bridgedContent: ModifiedContent(content: menu.content, modifier: DisabledModifier(true)), bridgedLabel: EmptyView(), primaryAction: nil))
                         }
                     }
                 } else if stripped is Divider {
