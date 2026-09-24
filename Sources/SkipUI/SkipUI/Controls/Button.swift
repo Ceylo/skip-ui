@@ -8,7 +8,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.ContentAlpha
 import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.material3.ButtonColors
@@ -135,7 +138,8 @@ public struct Button : View, Renderable {
         let isHitTestingEnabled = EnvironmentValues.shared._isHitTestingEnabled
         ComposeContainer(modifier: context.modifier) { modifier in
             switch buttonStyle {
-            case .bordered:
+            // Compose has no Liquid Glass: the glass styles draw as their bordered counterparts.
+            case .bordered, .glass:
                 let tint = role == .destructive ? Color(colorImpl: { MaterialTheme.colorScheme.error }) : EnvironmentValues.shared._tint
                 let colors: ButtonColors
                 if let tint {
@@ -145,6 +149,9 @@ public struct Button : View, Renderable {
                     colors = ButtonDefaults.filledTonalButtonColors()
                 }
                 var options = Material3ButtonOptions(onClick: action, modifier: modifier, enabled: isEnabled && isHitTestingEnabled, shape: ButtonDefaults.filledTonalShape, colors: colors, elevation: ButtonDefaults.filledTonalButtonElevation())
+                if let borderShape = EnvironmentValues.shared._buttonBorderShape {
+                    options = borderShape.apply(to: options)
+                }
                 if let updateOptions = EnvironmentValues.shared._material3Button {
                     options = updateOptions(options)
                 }
@@ -163,7 +170,7 @@ public struct Button : View, Renderable {
                         label.Compose(context: contentContext)
                     }
                 }
-            case .borderedProminent:
+            case .borderedProminent, .glassProminent:
                 let tint = role == .destructive ? Color(colorImpl: { MaterialTheme.colorScheme.error }) : EnvironmentValues.shared._tint
                 let colors: ButtonColors
                 if let tint {
@@ -183,6 +190,9 @@ public struct Button : View, Renderable {
                     colors = ButtonDefaults.buttonColors()
                 }
                 var options = Material3ButtonOptions(onClick: action, modifier: modifier, enabled: isEnabled && isHitTestingEnabled, shape: ButtonDefaults.shape, colors: colors, elevation: ButtonDefaults.buttonElevation())
+                if let borderShape = EnvironmentValues.shared._buttonBorderShape {
+                    options = borderShape.apply(to: options)
+                }
                 if let updateOptions = EnvironmentValues.shared._material3Button {
                     options = updateOptions(options)
                 }
@@ -294,9 +304,9 @@ public struct ButtonStyle: RawRepresentable, Equatable {
     public static let bordered = ButtonStyle(rawValue: 3) // For bridging
     public static let borderedProminent = ButtonStyle(rawValue: 4) // For bridging
     public static let m3Text = ButtonStyle(rawValue: 7) // For bridging
-    @available(*, unavailable)
+    /// Drawn as `.bordered`.
     public static let glass = ButtonStyle(rawValue: 5) // For bridging
-    @available(*, unavailable)
+    /// Drawn as `.borderedProminent`.
     public static let glassProminent = ButtonStyle(rawValue: 6) // For bridging
 }
 
@@ -351,6 +361,17 @@ extension View {
         return self
     }
 
+    /// Applies to the bordered and bordered-prominent styles (and the glass ones drawn
+    /// as them), like SwiftUI's. A negative `radius` means the style's default.
+    // SKIP @bridge
+    public func buttonBorderShape(bridgedShape: Int, radius: CGFloat) -> any View {
+        #if SKIP
+        return environment(\._buttonBorderShape, ButtonBorderShapeSpec(kind: bridgedShape, radius: radius), affectsEvaluate: false)
+        #else
+        return self
+        #endif
+    }
+
     public func buttonSizing(_ sizing: ButtonSizing) -> any View {
         // We only support .automatic
         return self
@@ -396,6 +417,28 @@ final class ButtonStyleModifier: EnvironmentModifier {
         return EnvironmentValues.shared.setValuesWithReturn(action!, in: {
             return content.shouldRenderListItem(context: context)
         })
+    }
+}
+
+/// The bridged form of `ButtonBorderShape`: `kind` is its identifier (0 automatic,
+/// 1 capsule, 2 rounded rectangle, 3 circle).
+struct ButtonBorderShapeSpec {
+    let kind: Int
+    let radius: CGFloat
+
+    func apply(to options: Material3ButtonOptions) -> Material3ButtonOptions {
+        switch kind {
+        case 1:
+            return options.copy(shape: RoundedCornerShape(percent: 50))
+        case 2:
+            return options.copy(shape: RoundedCornerShape((radius >= 0.0 ? radius : 8.0).dp))
+        case 3:
+            // Material's 58×40 dp minimum would stretch a circle into an oval; 40 dp
+            // square is its icon button's size.
+            return options.copy(modifier: options.modifier.defaultMinSize(minWidth: 40.dp, minHeight: 40.dp), shape: CircleShape, contentPadding: PaddingValues(8.dp))
+        default:
+            return options
+        }
     }
 }
 

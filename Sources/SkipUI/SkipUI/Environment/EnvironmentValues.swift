@@ -680,6 +680,11 @@ extension EnvironmentValues {
         set { setBuiltinValue(key: "_aspectRatio", value: newValue, defaultValue: { nil }) }
     }
 
+    var _buttonBorderShape: ButtonBorderShapeSpec? {
+        get { builtinValue(key: "_buttonBorderShape", defaultValue: { nil }) as! ButtonBorderShapeSpec? }
+        set { setBuiltinValue(key: "_buttonBorderShape", value: newValue, defaultValue: { nil }) }
+    }
+
     var _buttonStyle: ButtonStyle? {
         get { builtinValue(key: "_buttonStyle", defaultValue: { nil }) as! ButtonStyle? }
         set { setBuiltinValue(key: "_buttonStyle", value: newValue, defaultValue: { nil }) }
