@@ -701,6 +701,7 @@ public struct Image : View, Renderable, Equatable {
         case "play": return "Icons.Outlined.PlayArrow" //􀊃
         case "camera.viewfinder": return "Icons.Outlined.QrCodeScanner"
         case "arrow.clockwise.circle": return "Icons.Outlined.Refresh" //􀚁
+        case "arrow.clockwise": return "Icons.Outlined.Refresh" //􀅈
         case "square.and.arrow.down": return "Icons.Outlined.SaveAlt" //􀈄
         case "magnifyingglass": return "Icons.Outlined.Search" //􀊫
         case "paperplane": return "Icons.Outlined.Send" //􀈟
