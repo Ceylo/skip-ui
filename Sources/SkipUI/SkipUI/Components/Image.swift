@@ -658,6 +658,9 @@ public struct Image : View, Renderable, Equatable {
         case "arrow.left": return "Icons.Outlined.ArrowBack" //􀄪
         case "arrowtriangle.down.fill": return "Icons.Outlined.ArrowDropDown" //􀄥
         case "arrow.forward": return "Icons.Outlined.ArrowForward" //􀰑
+        case "arrow.up": return "Icons.Outlined.ArrowUpward" //􀄨
+        case "arrowshape.turn.up.left": return "Icons.Outlined.Reply" //􀉌
+        case "book": return "Icons.Outlined.MenuBook" //􀉚
         case "person.text.rectangle": return "Icons.Outlined.Badge"
         case "barcode": return "Icons.Outlined.Badge"
         case "chart.bar.xaxis": return "Icons.Outlined.BarChart"
@@ -750,9 +753,11 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Outlined.ArrowBack": return Icons.Outlined.ArrowBack // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.ArrowBack
         case "Icons.Outlined.ArrowDropDown": return Icons.Outlined.ArrowDropDown
         case "Icons.Outlined.ArrowForward": return Icons.Outlined.ArrowForward // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.ArrowForward
+        case "Icons.Outlined.ArrowUpward": return Icons.Outlined.ArrowUpward
         case "Icons.Outlined.Badge": return Icons.Outlined.Badge
         case "Icons.Outlined.BarChart": return Icons.Outlined.BarChart
         case "Icons.Outlined.BookmarkBorder": return Icons.Outlined.BookmarkBorder
+        case "Icons.Outlined.MenuBook": return Icons.Outlined.MenuBook // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.MenuBook
         case "Icons.Outlined.Build": return Icons.Outlined.Build
         case "Icons.Outlined.Call": return Icons.Outlined.Call
         case "Icons.Outlined.ChatBubbleOutline": return Icons.Outlined.ChatBubbleOutline
@@ -793,6 +798,7 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Outlined.PlayArrow": return Icons.Outlined.PlayArrow
         case "Icons.Outlined.QrCodeScanner": return Icons.Outlined.QrCodeScanner
         case "Icons.Outlined.Refresh": return Icons.Outlined.Refresh
+        case "Icons.Outlined.Reply": return Icons.Outlined.Reply // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.Reply
         case "Icons.Outlined.SaveAlt": return Icons.Outlined.SaveAlt
         case "Icons.Outlined.Search": return Icons.Outlined.Search
         case "Icons.Outlined.Send": return Icons.Outlined.Send // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.Send
