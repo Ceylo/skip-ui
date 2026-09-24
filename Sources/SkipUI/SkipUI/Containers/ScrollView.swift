@@ -199,7 +199,10 @@ public struct ScrollViewReader : View, Renderable {
     @Composable override func Render(context: ComposeContext) {
         let scrollToID = rememberSaveable(stateSaver: context.stateSaver as! Saver<Preference<ScrollToIDAction>, Any>) { mutableStateOf(Preference<ScrollToIDAction>(key: ScrollToIDPreferenceKey.self)) }
         let scrollToIDCollector = PreferenceCollector<ScrollToIDAction>(key: ScrollToIDPreferenceKey.self, state: scrollToID)
-        let scrollProxy = ScrollViewProxy(scrollToID: scrollToID.value.reduced.action)
+        // Resolve the action when the proxy is used, as SwiftUI does, not when it is made: on the
+        // first composition the scrollable content has not contributed its action yet, so a proxy
+        // captured then (by `onAppear`, say) would otherwise stay a no-op.
+        let scrollProxy = ScrollViewProxy(scrollToID: { id in scrollToID.value.reduced.action(id) })
         PreferenceValues.shared.collectPreferences([scrollToIDCollector]) {
             content(scrollProxy).Compose(context)
         }
