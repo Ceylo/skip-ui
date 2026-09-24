@@ -90,6 +90,11 @@ private let ButtonsCrossAxisSpacing: Dp = 12.dp
 private let AlertDialogMinWidth: Dp = 280.dp
 private let AlertDialogMaxWidth: Dp = 560.dp
 
+/// The content a sheet last drew while presented.
+final class PresentedContentHolder {
+    var view: (any View)?
+}
+
 // SKIP INSERT: @OptIn(ExperimentalMaterial3Api::class)
 @Composable func SheetPresentation(isPresented: Binding<Bool>, isFullScreen: Bool, context: ComposeContext, content: () -> any View, onDismiss: (() -> Void)?) {
     let interactiveDismissDisabledPreference = rememberSaveable(stateSaver: context.stateSaver as! Saver<Preference<Bool>, Any>) { mutableStateOf(Preference<Bool>(key: InteractiveDismissDisabledPreferenceKey.self)) }
@@ -97,10 +102,19 @@ private let AlertDialogMaxWidth: Dp = 560.dp
 
     let sheetState = rememberModalBottomSheetState(skipPartiallyExpanded: true)
     let isPresentedValue = isPresented.get()
+    // Like SwiftUI, call `content` only while presented, and keep drawing what it last returned while the
+    // sheet animates away: a builder that reads the presenting state (`sheet(item:)`, or a guard on it) has
+    // nothing to return by then.
+    let presentedContent = remember { PresentedContentHolder() }
+    if isPresentedValue {
+        presentedContent.view = content()
+    } else if !sheetState.isVisible {
+        presentedContent.view = nil
+    }
     if isPresentedValue || sheetState.isVisible {
         // Don't fully evaluate content until we set up the presented environment. For now we just want
         // to get at the modifiers to look for `BackDismissDisabled`
-        let contentRenderables = ComposeBuilder.from(content).Evaluate(context: context, options: EvaluateOptions(isKeepNonModified: true).value)
+        let contentRenderables = ComposeBuilder.from({ presentedContent.view ?? EmptyView() }).Evaluate(context: context, options: EvaluateOptions(isKeepNonModified: true).value)
         let topInset = remember { mutableStateOf(0.dp) }
         let topInsetPx = with(LocalDensity.current) { topInset.value.toPx() }
         let handleHeight = isFullScreen ? 0.dp : 8.dp
@@ -1165,6 +1179,13 @@ extension View {
         return fullScreenCover(isPresented: isPresented, onDismiss: onDismiss, content: { bridgedContent })
     }
 
+    /// Takes the content as a builder, so that it is only called while presented.
+    // SKIP @bridge
+    public func fullScreenCover(getIsPresented: @escaping () -> Bool, setIsPresented: @escaping (Bool) -> Void, onDismiss: (() -> Void)?, bridgedContentBuilder: @escaping () -> any View) -> any View {
+        let isPresented = Binding(get: getIsPresented, set: setIsPresented)
+        return fullScreenCover(isPresented: isPresented, onDismiss: onDismiss, content: bridgedContentBuilder)
+    }
+
     // SKIP @bridge
     public func interactiveDismissDisabled(_ isDisabled: Bool = true) -> any View {
         #if SKIP
@@ -1297,6 +1318,13 @@ extension View {
     public func sheet(getIsPresented: @escaping () -> Bool, setIsPresented: @escaping (Bool) -> Void, onDismiss: (() -> Void)?, bridgedContent: any View) -> any View {
         let isPresented = Binding(get: getIsPresented, set: setIsPresented)
         return sheet(isPresented: isPresented, onDismiss: onDismiss, content: { bridgedContent })
+    }
+
+    /// Takes the content as a builder, so that it is only called while presented.
+    // SKIP @bridge
+    public func sheet(getIsPresented: @escaping () -> Bool, setIsPresented: @escaping (Bool) -> Void, onDismiss: (() -> Void)?, bridgedContentBuilder: @escaping () -> any View) -> any View {
+        let isPresented = Binding(get: getIsPresented, set: setIsPresented)
+        return sheet(isPresented: isPresented, onDismiss: onDismiss, content: bridgedContentBuilder)
     }
 }
 
