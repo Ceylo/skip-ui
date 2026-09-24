@@ -174,6 +174,25 @@ class GeometryReaderTests {
         rule.runOnIdle { probe.assertUpdated(); assertEquals(100.0, (probe.value as CGSize).width, 0.0) }
     }
 
+    /** The global frame is the laid-out one, as in SwiftUI: a clipping ancestor shrinks neither it nor its origin. */
+    @Test fun actualReaderReportsUnclippedGlobalFrame() {
+        val probe = Probe()
+        val reader = GeometryReader { proxy -> probe.record(proxy.frame(GlobalCoordinateSpace())); EmptyView() }
+        rule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                Box(Modifier.size(50.dp).clipToBounds()) {
+                    reader.Render(ComposeContext(modifier = Modifier.requiredSize(100.dp)))
+                }
+            }
+        }
+        rule.runOnIdle {
+            val frame = probe.value as CGRect
+            assertEquals(100.0, frame.size.width, 0.0)
+            assertEquals(100.0, frame.size.height, 0.0)
+            assertTrue("requiredSize centres the reader over its 50 dp parent", frame.origin.y < 0.0)
+        }
+    }
+
     /** Environment changes reach the isolated updater, including initial, overridden and nil values. */
     @Test fun actualReaderEnvironmentUpdatesOnlyInsetConsumers() {
         val environment = mutableStateOf<SafeArea?>(area())
