@@ -104,6 +104,7 @@ import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.moveTo
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -632,6 +633,18 @@ final class SkipUITests: SkipUITestCase {
         }, eval: { rule in
             rule.onNodeWithText("Live").assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
             rule.onNodeWithText("Header").assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.LiveRegion))
+        })
+        #endif
+    }
+
+    func testShadowCopyIsHiddenFromAccessibility() throws {
+        #if !SKIP
+        throw XCTSkip("Compose semantics")
+        #else
+        try testUI(view: {
+            Text("Shadowed").shadow(radius: 4)
+        }, eval: { rule in
+            rule.onAllNodesWithText("Shadowed").assertCountEquals(1)
         })
         #endif
     }
