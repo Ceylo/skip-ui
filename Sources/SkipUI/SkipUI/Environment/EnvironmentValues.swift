@@ -914,6 +914,12 @@ extension EnvironmentValues {
         set { setBuiltinValue(key: "_tabViewTransitions", value: newValue, defaultValue: { nil }) }
     }
 
+    /// Bumped each time the enclosing tab is re-tapped while selected. Only the tab's own `NavigationStack` sees it.
+    var _tabReselectSignal: MutableState<Int>? {
+        get { builtinValue(key: "_tabReselectSignal", defaultValue: { nil }) as! MutableState<Int>? }
+        set { setBuiltinValue(key: "_tabReselectSignal", value: newValue, defaultValue: { nil }) }
+    }
+
     var _safeArea: SafeArea? {
         get { builtinValue(key: "_safeArea", defaultValue: { nil }) as! SafeArea? }
         set { setBuiltinValue(key: "_safeArea", value: newValue, defaultValue: { nil }) }

@@ -71,6 +71,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsConfiguration
@@ -103,11 +104,14 @@ import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.moveTo
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performKeyPress
@@ -517,6 +521,146 @@ final class SkipUITests: SkipUITestCase {
                     }
             }
         }
+    }
+
+    func testReselectingTabPopsToRootThenScrollsToTop() throws {
+        #if !SKIP
+        throw XCTSkip("Tab reselection is a Compose behavior")
+        #else
+        try testUI(view: {
+            TabReselectTestView()
+        }, eval: { rule in
+            rule.waitForIdle()
+            rule.onNodeWithText("Push").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Pushed").assertIsDisplayed()
+
+            // Pushed: re-tapping the tab pops to the root
+            rule.onNodeWithText("First").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Pushed").assertDoesNotExist()
+            rule.onNodeWithText("Push").assertIsDisplayed()
+
+            // At the root: re-tapping the tab scrolls to the top
+            rule.onNode(hasScrollAction()).performScrollToIndex(49)
+            rule.waitForIdle()
+            rule.onNodeWithText("Push").assertDoesNotExist()
+            rule.onNodeWithText("First").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Push").assertIsDisplayed()
+
+            // Another tab still just switches
+            rule.onNodeWithText("Second").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Second Content").assertIsDisplayed()
+        })
+        #endif
+    }
+
+    struct TabReselectTestView: View {
+        var body: some View {
+            TabView {
+                NavigationStack {
+                    List {
+                        NavigationLink("Push") {
+                            Text("Pushed")
+                        }
+                        ForEach(0..<50) { index in
+                            Text("Row \(index)")
+                        }
+                    }
+                }
+                .tabItem {
+                    Label("First", systemImage: "house")
+                }
+                Text("Second Content")
+                    .tabItem {
+                        Label("Second", systemImage: "gear")
+                    }
+            }
+        }
+    }
+
+    func testGlassEffectKeepsContentStateWhenToggled() throws {
+        #if !SKIP
+        throw XCTSkip("glassEffect is a pass-through off Android")
+        #else
+        try testUI(view: {
+            GlassToggleTestView()
+        }, eval: { rule in
+            rule.onNodeWithText("Count 0").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Toggle glass").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Count 1").assertIsDisplayed()
+            rule.onNodeWithText("Toggle glass").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Count 1").assertIsDisplayed()
+        })
+        #endif
+    }
+
+    // Only Skip's glassEffect takes isEnabled.
+    #if SKIP
+    struct GlassToggleTestView: View {
+        @State var isGlass = true
+        var body: some View {
+            VStack {
+                Button("Toggle glass") { isGlass.toggle() }
+                GlassCounterView()
+                    .glassEffect(in: RoundedRectangle(cornerRadius: 8), isEnabled: isGlass)
+            }
+        }
+    }
+
+    struct GlassCounterView: View {
+        @State var count = 0
+        var body: some View {
+            Button("Count \(count)") { count += 1 }
+        }
+    }
+    #endif
+
+    func testUpdatesFrequentlyTraitIsPoliteLiveRegion() throws {
+        #if !SKIP
+        throw XCTSkip("Compose semantics")
+        #else
+        try testUI(view: {
+            VStack {
+                Text("Live").accessibilityAddTraits(.updatesFrequently)
+                Text("Header").accessibilityAddTraits(.isHeader)
+            }
+        }, eval: { rule in
+            rule.onNodeWithText("Live").assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+            rule.onNodeWithText("Header").assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.LiveRegion))
+        })
+        #endif
+    }
+
+    func testShadowCopyIsHiddenFromAccessibility() throws {
+        #if !SKIP
+        throw XCTSkip("Compose semantics")
+        #else
+        try testUI(view: {
+            Text("Shadowed").shadow(radius: 4)
+        }, eval: { rule in
+            rule.onAllNodesWithText("Shadowed").assertCountEquals(1)
+        })
+        #endif
+    }
+
+    // Unlike the bridged `.task`, `List`/`ScrollView` run a refresh action in a Compose coroutine scope,
+    // whose cancellation is a real coroutine cancellation.
+    func testBridgedRefreshActionCancelledWithItsCoroutine() throws {
+        #if !SKIP
+        throw XCTSkip("Coroutine cancellation is a Kotlin behavior")
+        #else
+        // The action runs on another dispatcher, so wait for it to install its `onCancel` before cancelling.
+        // SKIP INSERT: val installed = kotlinx.coroutines.CompletableDeferred<Unit>()
+        // SKIP INSERT: val cancelled = kotlinx.coroutines.CompletableDeferred<Unit>()
+        // SKIP INSERT: val action = RefreshAction(bridgedAction = { handler -> handler.onCancel = { cancelled.complete(Unit) }; installed.complete(Unit) })
+        // SKIP INSERT: kotlinx.coroutines.runBlocking { val job = launch { action.action() }; installed.await(); job.cancel(); kotlinx.coroutines.withTimeout(5000) { cancelled.await() } }
+        #endif
     }
 
     func testMenuAccessibilityIdentifier() throws {

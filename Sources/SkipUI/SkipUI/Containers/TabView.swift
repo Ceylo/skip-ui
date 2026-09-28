@@ -251,6 +251,7 @@ public struct TabView : View, Renderable {
         }
 
         let tabBackStacks = rememberSkipTabViewBackStacks()
+        let tabReselectSignals = remember { TabReselectSignals() }
         let selectedTabIndex = rememberSaveable(stateSaver: context.stateSaver as! Saver<Int, Any>) { mutableStateOf(0) }
         // Isolate access to current route within child Composable so route nav does not force us to recompose
         navigateToCurrentRoute(tabBackStacks: tabBackStacks, selectedTabIndex: selectedTabIndex, tabRenderables: tabRenderables)
@@ -389,6 +390,10 @@ public struct TabView : View, Renderable {
                                     let tabsState = rememberUpdatedState(tabs)
                                     let containerColor = showScrolledBackground ? tabBarBackgroundColor : unscrolledTabBarBackgroundColor
                                     let onItemClick: (Int) -> Void = { tabIndex in
+                                        if tabIndex == selectedTabIndex.value {
+                                            tabReselectSignals.signal(for: tabIndex).value += 1
+                                            return
+                                        }
                                         let route = String(describing: tabIndex)
                                         if let selection, let tagValue = tagValue(route: route, in: tabRenderables) {
                                             selection.wrappedValue = tagValue
@@ -512,7 +517,7 @@ public struct TabView : View, Renderable {
                                     Box(modifier: Modifier.alpha(alpha), contentAlignment: androidx.compose.ui.Alignment.Center) {
                                         // This block is called multiple times on tab switch. Use stable arguments that will prevent our entry from
                                         // recomposing when called with the same values
-                                        let arguments = TabEntryArguments(tabIndex: tabIndex, modifier: contentModifier, safeArea: contentSafeArea)
+                                        let arguments = TabEntryArguments(tabIndex: tabIndex, modifier: contentModifier, safeArea: contentSafeArea, reselectSignal: tabReselectSignals.signal(for: tabIndex))
                                         PreferenceValues.shared.collectPreferences([tabBarPreferencesCollector]) {
                                             RenderEntry(with: arguments, context: entryContext)
                                         }
@@ -570,6 +575,7 @@ public struct TabView : View, Renderable {
                 if let safeArea = arguments.safeArea {
                     $0.set_safeArea(safeArea)
                 }
+                $0.set_tabReselectSignal(arguments.reselectSignal)
                 return ComposeResult.ok
             } in: {
                 let renderables = EvaluateContent(context: context)
@@ -663,6 +669,21 @@ public struct SkipTabViewRouteKey : NavKey {
     let tabIndex: Int
     let modifier: Modifier
     let safeArea: SafeArea?
+    let reselectSignal: MutableState<Int>
+}
+
+/// Per-tab counters bumped when the selected tab is tapped again.
+@Stable final class TabReselectSignals {
+    private var signals: [Int: MutableState<Int>] = [:]
+
+    func signal(for tabIndex: Int) -> MutableState<Int> {
+        if let signal = signals[tabIndex] {
+            return signal
+        }
+        let signal = mutableStateOf(0)
+        signals[tabIndex] = signal
+        return signal
+    }
 }
 
 struct TabBarPreferenceKey: PreferenceKey {

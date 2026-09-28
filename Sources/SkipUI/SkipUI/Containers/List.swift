@@ -218,6 +218,16 @@ public final class List : View, Renderable {
         let itemCollector = remember { mutableStateOf(LazyItemCollector()) }
         let moveTrigger = remember { mutableStateOf(0) }
         let listState = rememberLazyListState(initialFirstVisibleItemIndex = isSearchable && arguments.headerSafeAreaHeight.value <= 0 ? 1 : 0)
+        // A header inserted above a list resting at its top would stay above the viewport, because Compose
+        // keeps the first keyed row in place. That happens when the top safe area arrives after the first pass.
+        // Index 0 or 1: before or after the insertion is laid out
+        let hadHeader = remember { mutableStateOf(hasHeader) }
+        LaunchedEffect(hasHeader) {
+            if hasHeader && !hadHeader.value && listState.firstVisibleItemIndex <= 1 && listState.firstVisibleItemScrollOffset == 0 {
+                listState.scrollToItem(0)
+            }
+            hadHeader.value = hasHeader
+        }
         let reorderableState = rememberReorderableLazyListState(listState: listState, onMove: { from, to in
             // Trigger recompose on move, but don't read the trigger state until we're inside the list content to limit its scope
             itemCollector.value.move(from: from.index, to: to.index, trigger: { moveTrigger.value = $0 })
@@ -235,13 +245,16 @@ public final class List : View, Renderable {
                 reorderableState.listState.animateScrollToItem(0)
             }
         })
+        // Like iOS's content inset: an item scrolled to the top stops below the safe area the header covers.
+        // Read at call time: the action compares by key, so the first closure contributed is the one kept
+        let headerSafeAreaOffsetPx = rememberUpdatedState(hasHeader && !isSearchable ? -with(LocalDensity.current) { arguments.headerSafeAreaHeight.roundToPx() } : 0)
         let scrollToID = ScrollToIDAction(key: reorderableState.listState) { id in
             if let itemIndex = itemCollector.value.index(for: id) {
                 coroutineScope.launch {
                     if Animation.isInWithAnimation {
-                        reorderableState.listState.animateScrollToItem(itemIndex)
+                        reorderableState.listState.animateScrollToItem(itemIndex, scrollOffset: headerSafeAreaOffsetPx.value)
                     } else {
-                        reorderableState.listState.scrollToItem(itemIndex)
+                        reorderableState.listState.scrollToItem(itemIndex, scrollOffset: headerSafeAreaOffsetPx.value)
                     }
                 }
             }

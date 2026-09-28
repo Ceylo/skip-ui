@@ -1504,15 +1504,27 @@ extension View {
             let actionState = rememberUpdatedState(bridgedAction)
             DisposableEffect(value) {
                 let task = Task {
-                    kotlinx.coroutines.suspendCancellableCoroutine { continuation in
-                        let completionHandler = CompletionHandler({
-                            do { continuation.resume(Unit, nil) } catch {}
-                        })
-                        continuation.invokeOnCancellation { _ in
-                            completionHandler.onCancel?()
+                    // `Task.cancel()` only runs the handlers registered here: it never cancels
+                    // the coroutine, so `invokeOnCancellation` alone never reached the Swift task.
+                    var completionHandler: CompletionHandler? = nil
+                    withTaskCancellationHandler(operation: {
+                        kotlinx.coroutines.suspendCancellableCoroutine { continuation in
+                            let handler = CompletionHandler({
+                                do { continuation.resume(Unit, nil) } catch {}
+                            })
+                            completionHandler = handler
+                            continuation.invokeOnCancellation { _ in
+                                handler.onCancel?()
+                            }
+                            actionState.value(handler)
+                            // Cancelled before the action installed its `onCancel`.
+                            if Task.isCancelled {
+                                handler.onCancel?()
+                            }
                         }
-                        actionState.value(completionHandler)
-                    }
+                    }, onCancel: {
+                        completionHandler?.onCancel?()
+                    })
                 }
                 onDispose {
                     task.cancel()
