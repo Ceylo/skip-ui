@@ -579,6 +579,46 @@ final class SkipUITests: SkipUITestCase {
         }
     }
 
+    func testGlassEffectKeepsContentStateWhenToggled() throws {
+        #if !SKIP
+        throw XCTSkip("glassEffect is a pass-through off Android")
+        #else
+        try testUI(view: {
+            GlassToggleTestView()
+        }, eval: { rule in
+            rule.onNodeWithText("Count 0").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Toggle glass").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Count 1").assertIsDisplayed()
+            rule.onNodeWithText("Toggle glass").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Count 1").assertIsDisplayed()
+        })
+        #endif
+    }
+
+    // Only Skip's glassEffect takes isEnabled.
+    #if SKIP
+    struct GlassToggleTestView: View {
+        @State var isGlass = true
+        var body: some View {
+            VStack {
+                Button("Toggle glass") { isGlass.toggle() }
+                GlassCounterView()
+                    .glassEffect(in: RoundedRectangle(cornerRadius: 8), isEnabled: isGlass)
+            }
+        }
+    }
+
+    struct GlassCounterView: View {
+        @State var count = 0
+        var body: some View {
+            Button("Count \(count)") { count += 1 }
+        }
+    }
+    #endif
+
     // Unlike the bridged `.task`, `List`/`ScrollView` run a refresh action in a Compose coroutine scope,
     // whose cancellation is a real coroutine cancellation.
     func testBridgedRefreshActionCancelledWithItsCoroutine() throws {

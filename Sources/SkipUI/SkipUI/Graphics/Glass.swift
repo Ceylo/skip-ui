@@ -58,10 +58,11 @@ extension View {
     /// instead: `surfaceContainer` in `shape`, under a level-2 elevation shadow.
     public func glassEffect(_ glass: Glass = .regular, in shape: any Shape = Capsule(), isEnabled: Bool = true) -> any View {
         #if SKIP
-        guard isEnabled else {
-            return self
-        }
+        // Branch inside the modifier: returning `self` would change the content's identity.
         return ModifiedContent(content: self, modifier: RenderModifier {
+            guard isEnabled else {
+                return $0.modifier
+            }
             let composeShape = shape.asComposeShape(density: LocalDensity.current)
             return $0.modifier
                 .shadow(elevation: 3.dp, shape: composeShape, clip: false)
