@@ -688,7 +688,9 @@ public struct NavigationStack : View, Renderable {
                 // Calculate safe area for content by insetting by topBar and bottomBar heights
                 var contentSafeArea: SafeArea?
                 if let safeArea = arguments.safeArea {
-                    let clampedTopBarBottomPxValue: Float = max(effectiveTopBarBottomPx, safeArea.safeBoundsPx.top)
+                    // With no top bar, leave the top a system-bar edge, as the Column layout does, so a
+                    // List can still expand under the status bar.
+                    let clampedTopBarBottomPxValue: Float = effectiveTopBarBottomPx > Float(0.0) ? max(effectiveTopBarBottomPx, safeArea.safeBoundsPx.top) : Float(0.0)
                     contentSafeArea = safeArea
                         .insetting(.top, to: clampedTopBarBottomPxValue)
                         .insetting(.bottom, to: bottomBarTopPx.value)
