@@ -579,6 +579,20 @@ final class SkipUITests: SkipUITestCase {
         }
     }
 
+    // Unlike the bridged `.task`, `List`/`ScrollView` run a refresh action in a Compose coroutine scope,
+    // whose cancellation is a real coroutine cancellation.
+    func testBridgedRefreshActionCancelledWithItsCoroutine() throws {
+        #if !SKIP
+        throw XCTSkip("Coroutine cancellation is a Kotlin behavior")
+        #else
+        // The action runs on another dispatcher, so wait for it to install its `onCancel` before cancelling.
+        // SKIP INSERT: val installed = kotlinx.coroutines.CompletableDeferred<Unit>()
+        // SKIP INSERT: val cancelled = kotlinx.coroutines.CompletableDeferred<Unit>()
+        // SKIP INSERT: val action = RefreshAction(bridgedAction = { handler -> handler.onCancel = { cancelled.complete(Unit) }; installed.complete(Unit) })
+        // SKIP INSERT: kotlinx.coroutines.runBlocking { val job = launch { action.action() }; installed.await(); job.cancel(); kotlinx.coroutines.withTimeout(5000) { cancelled.await() } }
+        #endif
+    }
+
     func testMenuAccessibilityIdentifier() throws {
         try testUI(view: {
             MenuTestView().accessibilityIdentifier("test-view")
