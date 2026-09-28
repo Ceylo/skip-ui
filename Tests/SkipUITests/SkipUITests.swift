@@ -108,6 +108,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performKeyPress
@@ -510,6 +512,64 @@ final class SkipUITests: SkipUITestCase {
                         .tabItem {
                             Label("Hidden", systemImage: "star")
                         }
+                }
+                Text("Second Content")
+                    .tabItem {
+                        Label("Second", systemImage: "gear")
+                    }
+            }
+        }
+    }
+
+    func testReselectingTabPopsToRootThenScrollsToTop() throws {
+        #if !SKIP
+        throw XCTSkip("Tab reselection is a Compose behavior")
+        #else
+        try testUI(view: {
+            TabReselectTestView()
+        }, eval: { rule in
+            rule.waitForIdle()
+            rule.onNodeWithText("Push").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Pushed").assertIsDisplayed()
+
+            // Pushed: re-tapping the tab pops to the root
+            rule.onNodeWithText("First").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Pushed").assertDoesNotExist()
+            rule.onNodeWithText("Push").assertIsDisplayed()
+
+            // At the root: re-tapping the tab scrolls to the top
+            rule.onNode(hasScrollAction()).performScrollToIndex(49)
+            rule.waitForIdle()
+            rule.onNodeWithText("Push").assertDoesNotExist()
+            rule.onNodeWithText("First").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Push").assertIsDisplayed()
+
+            // Another tab still just switches
+            rule.onNodeWithText("Second").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Second Content").assertIsDisplayed()
+        })
+        #endif
+    }
+
+    struct TabReselectTestView: View {
+        var body: some View {
+            TabView {
+                NavigationStack {
+                    List {
+                        NavigationLink("Push") {
+                            Text("Pushed")
+                        }
+                        ForEach(0..<50) { index in
+                            Text("Row \(index)")
+                        }
+                    }
+                }
+                .tabItem {
+                    Label("First", systemImage: "house")
                 }
                 Text("Second Content")
                     .tabItem {

@@ -100,6 +100,8 @@ import kotlin.reflect.full.superclasses
 import kotlinx.serialization.Serializable
 import androidx.compose.runtime.key
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
+import androidx.compose.runtime.snapshotFlow
 #endif
 
 // SKIP @bridge
@@ -158,6 +160,14 @@ public struct NavigationStack : View, Renderable {
         let navBackStack = rememberNavBackStack(SkipNavigationStackRootKey.root)
         let navigator = rememberSaveable(stateSaver: context.stateSaver as! Saver<Navigator, Any>) { mutableStateOf(Navigator(navBackStack: navBackStack, destinations: mergedDestinations, destinationKeyTransformer: destinationKeyTransformer)) }
         navigator.value.didCompose(navBackStack: navBackStack, destinations: mergedDestinations, path: path, navigationPath: navigationPath, keyboardController: LocalSoftwareKeyboardController.current)
+        // Watched here rather than in the root entry, which isn't composed while something is pushed
+        if let tabReselectSignal = EnvironmentValues.shared._tabReselectSignal {
+            LaunchedEffect(tabReselectSignal) {
+                snapshotFlow { tabReselectSignal.value }.drop(1).collect { _ in
+                    navigator.value.tabReselected()
+                }
+            }
+        }
 
         // SKIP INSERT: val providedNavigator = LocalNavigator provides navigator.value
         CompositionLocalProvider(providedNavigator) {
@@ -294,6 +304,9 @@ public struct NavigationStack : View, Renderable {
 
         let scrollToTop = rememberSaveable(stateSaver: context.stateSaver as! Saver<Preference<ScrollToTopAction>, Any>) { mutableStateOf(Preference<ScrollToTopAction>(key: ScrollToTopPreferenceKey.self)) }
         let scrollToTopCollector = PreferenceCollector<ScrollToTopAction>(key: ScrollToTopPreferenceKey.self, state: scrollToTop)
+        if arguments.isRoot {
+            SideEffect { navigator.value.rootScrollToTop = scrollToTop }
+        }
 
         let initialScrollBehavior = isInlineTitleDisplayMode ? TopAppBarDefaults.pinnedScrollBehavior() : TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
         // Determine the final scrollBehavior early by checking if the environment value would modify it
@@ -656,6 +669,7 @@ public struct NavigationStack : View, Renderable {
                         $0.set_searchableState(searchableState)
                         $0.set_isNavigationRoot(arguments.isRoot)
                         $0.set_nestedScrollConnection(scrollBehavior.nestedScrollConnection)
+                        $0.set_tabReselectSignal(nil)
                         return ComposeResult.ok
                     } in: {
                         // Elevate the top padding modifier so that content always has the same context, allowing it to avoid recomposition
@@ -792,6 +806,7 @@ public struct NavigationStack : View, Renderable {
                         $0.set_searchableState(searchableState)
                         $0.set_isNavigationRoot(arguments.isRoot)
                         $0.set_nestedScrollConnection(scrollBehavior.nestedScrollConnection)
+                        $0.set_tabReselectSignal(nil)
                         return ComposeResult.ok
                     } in: {
                         // Elevate the top padding modifier so that content always has the same context, allowing it to avoid recomposition
@@ -915,6 +930,9 @@ private func mergeNavigationDestinationsWithLayoutHints(_ destinations: Navigati
     private var path: Binding<[Any]>?
     private var navigationPath: Binding<NavigationPath>?
 
+    /// The root entry's scroll-to-top action.
+    var rootScrollToTop: MutableState<Preference<ScrollToTopAction>>?
+
     private var backStackState: [String: BackStackState] = [:]
     final class BackStackState {
         let id: String
@@ -1005,6 +1023,28 @@ private func mergeNavigationDestinationsWithLayoutHints(_ destinations: Navigati
             navigationPath.wrappedValue.removeLast()
         } else if !isRoot {
             navBackStack.removeLastOrNull()
+        }
+    }
+
+    /// Pop to the root, including pushed views that are not in the bound path.
+    func navigateToRoot() {
+        if let path, !path.wrappedValue.isEmpty {
+            path.wrappedValue = []
+        }
+        if let navigationPath, !navigationPath.wrappedValue.isEmpty {
+            navigationPath.wrappedValue = NavigationPath()
+        }
+        while !isRoot {
+            navBackStack.removeLastOrNull()
+        }
+    }
+
+    /// The enclosing tab was re-tapped: pop to the root, or scroll it to the top when already there.
+    func tabReselected() {
+        if isRoot {
+            rootScrollToTop?.value.reduced.action()
+        } else {
+            navigateToRoot()
         }
     }
 
