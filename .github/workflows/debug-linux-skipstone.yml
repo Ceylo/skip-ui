@@ -1,0 +1,34 @@
+name: debug-linux-skipstone
+on:
+  push:
+    branches: [ debug/linux-skipstone ]
+jobs:
+  debug:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - run: echo "JAVA_HOME=${JAVA_HOME_21_X64}" >> $GITHUB_ENV
+      - uses: skiptools/actions/setup-skip@v1
+        with:
+          verify-project: '.'
+          install-swift-android-sdk: true
+      - name: Build, then re-run the failing skipstone command
+        run: |
+          mkdir -p dbg
+          ulimit -a | tee dbg/ulimit.txt
+          skip android build --verbose > dbg/build.log 2>&1; echo "build exit=$?" | tee dbg/exit.txt
+          tail -50 dbg/build.log
+          CMD=$(grep -m1 -oE '/[^ ]*/skip skipstone --project [^ ]*/Sources/SkipUI .*' dbg/build.log || true)
+          echo "CMD=$CMD" | cut -c1-300
+          if [ -n "$CMD" ]; then
+            bash -c "$CMD" > dbg/skipstone.out 2> dbg/skipstone.err; echo "skipstone exit=$?" | tee -a dbg/exit.txt
+            tail -100 dbg/skipstone.out; echo ---stderr---; tail -100 dbg/skipstone.err
+            bash -c "$CMD --verbose" > dbg/skipstone-v.out 2>&1; echo "skipstone -v exit=$?" | tee -a dbg/exit.txt
+            tail -100 dbg/skipstone-v.out
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dbg
+          path: dbg/
