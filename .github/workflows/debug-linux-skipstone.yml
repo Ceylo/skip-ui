@@ -15,7 +15,7 @@ jobs:
           install-swift-android-sdk: true
       - name: Build, then re-run the failing skipstone command
         run: |
-          mkdir -p dbg
+          set +e; mkdir -p dbg
           ulimit -a | tee dbg/ulimit.txt
           skip android build --verbose > dbg/build.log 2>&1; echo "build exit=$?" | tee dbg/exit.txt
           tail -50 dbg/build.log
