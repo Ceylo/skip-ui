@@ -24,13 +24,16 @@ jobs:
           if [ -n "$CMD" ]; then
             bash -c "$CMD" > dbg/skipstone.out 2> dbg/skipstone.err; echo "skipstone exit=$?" | tee -a dbg/exit.txt
             tail -100 dbg/skipstone.out; echo ---stderr---; tail -100 dbg/skipstone.err
-            (ulimit -s unlimited; bash -c "$CMD" > dbg/skipstone-ulimit.out 2>&1; echo "skipstone ulimit-s-unlimited exit=$?" | tee -a dbg/exit.txt)
-            sudo apt-get install -y gdb > /dev/null 2>&1 || true
             BIN=${CMD%% skipstone *}
-            ARGS=${CMD#* skipstone }
-            echo "BIN=$BIN"
-            gdb -batch -ex "run skipstone $ARGS" -ex "bt 60" -ex "info threads" -ex "thread apply all bt 8" --args "$BIN" > dbg/gdb.txt 2>&1
-            grep -nE "SIGSEGV|^#|Thread|stack" dbg/gdb.txt | head -120
+            HASH=$(echo "$CMD" | grep -oE -- '--sourcehash [^ ]+' | cut -d' ' -f2)
+            echo "HASH=$HASH"
+            for SIZE in default 524288 1048576 8388608; do
+              rm -f "$HASH"
+              if [ "$SIZE" = default ]; then B="$BIN"; else cp "$BIN" /tmp/skip-$SIZE && python3 .github/scripts/set-gnu-stack.py /tmp/skip-$SIZE $SIZE; B=/tmp/skip-$SIZE; fi
+              bash -c "$B skipstone ${CMD#* skipstone }" > dbg/skipstone-$SIZE.out 2>&1; echo "skipstone stack=$SIZE exit=$?" | tee -a dbg/exit.txt
+              tail -3 dbg/skipstone-$SIZE.out | cut -c1-300
+              ls -la "$HASH" 2>&1 | tee -a dbg/exit.txt
+            done
           fi
       - uses: actions/upload-artifact@v4
         if: always()
