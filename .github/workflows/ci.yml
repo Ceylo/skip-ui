@@ -13,6 +13,8 @@ permissions:
 
 jobs:
   call-workflow:
-    uses: skiptools/actions/.github/workflows/skip-framework.yml@v1
+    uses: Ceylo/actions/.github/workflows/skip-framework.yml@test/skip-linux-override
     with:
       runs-on: "['macos-26', 'ubuntu-24.04']"
+      env: |
+        SKIP_LINUX_OVERRIDE_RUN=__RUN__
