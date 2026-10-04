@@ -5,7 +5,11 @@
 
 #if !SKIP
 
+#if canImport(CoreGraphics)
 import struct CoreGraphics.CGFloat
+#else
+import Foundation
+#endif
 
 /// A type that can serve as the animatable data of an animatable type.
 ///

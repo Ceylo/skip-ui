@@ -1,0 +1,39 @@
+name: debug-linux-host
+on:
+  push:
+    branches: [ debug/linux-host-build ]
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - run: echo "JAVA_HOME=${JAVA_HOME_21_X64}" >> $GITHUB_ENV
+      - uses: skiptools/actions/setup-skip@v1
+        with:
+          verify-project: '.'
+          install-swift-android-sdk: true
+      - name: skipstone binary with 8 MiB thread stacks (skipstone#290)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download -R Ceylo/skipstone 37215959491 -n skip-plugin-Linux -D "${RUNNER_TEMP}/so"
+          cd "${RUNNER_TEMP}/so" && unzip -q skip-linux.zip && chmod +x skip.artifactbundle/x86_64-swift-linux-musl/skip
+          echo "SKIP_COMMAND_OVERRIDE=${PWD}/skip.artifactbundle/x86_64-swift-linux-musl/skip" >> $GITHUB_ENV
+      - name: Host build, all errors
+        run: |
+          set +e; mkdir -p dbg
+          swift build --build-tests > dbg/build.log 2>&1; echo "build exit=$?" | tee dbg/exit.txt
+          sed 's/\x1b\[[0-9;]*m//g' dbg/build.log | grep -E "^/.*\.swift:[0-9]+:[0-9]+: error:" | sort -u | tee dbg/errors.txt | head -150
+          echo "distinct errors: $(wc -l < dbg/errors.txt)"
+          sed 's/\x1b\[[0-9;]*m//g' dbg/build.log | grep -oE "error: .*" | sed -E "s/'[^']*'/'X'/g" | sort | uniq -c | sort -rn | head -40
+      - name: Host tests (Robolectric)
+        run: |
+          set +e
+          swift test > dbg/test.log 2>&1; echo "test exit=$?" | tee -a dbg/exit.txt
+          grep -E "JUNIT SUITES|Executed [0-9]+ tests|error:" dbg/test.log | tail -20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dbg
+          path: dbg/
