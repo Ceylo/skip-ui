@@ -24,8 +24,13 @@ jobs:
           if [ -n "$CMD" ]; then
             bash -c "$CMD" > dbg/skipstone.out 2> dbg/skipstone.err; echo "skipstone exit=$?" | tee -a dbg/exit.txt
             tail -100 dbg/skipstone.out; echo ---stderr---; tail -100 dbg/skipstone.err
-            bash -c "$CMD --verbose" > dbg/skipstone-v.out 2>&1; echo "skipstone -v exit=$?" | tee -a dbg/exit.txt
-            tail -100 dbg/skipstone-v.out
+            (ulimit -s unlimited; bash -c "$CMD" > dbg/skipstone-ulimit.out 2>&1; echo "skipstone ulimit-s-unlimited exit=$?" | tee -a dbg/exit.txt)
+            sudo apt-get install -y gdb > /dev/null 2>&1 || true
+            BIN=${CMD%% skipstone *}
+            ARGS=${CMD#* skipstone }
+            echo "BIN=$BIN"
+            gdb -batch -ex "run skipstone $ARGS" -ex "bt 60" -ex "info threads" -ex "thread apply all bt 8" --args "$BIN" > dbg/gdb.txt 2>&1
+            grep -nE "SIGSEGV|^#|Thread|stack" dbg/gdb.txt | head -120
           fi
       - uses: actions/upload-artifact@v4
         if: always()
