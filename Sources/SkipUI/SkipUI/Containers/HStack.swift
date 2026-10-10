@@ -3,6 +3,7 @@
 #if !SKIP_BRIDGE
 #if SKIP
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
@@ -165,7 +166,10 @@ public struct HStack : View, Renderable {
             $0.map(arguments.idMap)
         }, content: { state in
             let animation = Animation.current(isAnimating: transition.isRunning)
-            if animation == nil {
+            // Only the incoming content may end the insertion: an outgoing one finishes
+            // its exit first, and clearing then would strip the enter transition from
+            // the incoming child if the stack recomposes before it has played.
+            if animation == nil && transition.targetState == EnterExitState.Visible {
                 arguments.rememberedNewIds.clear()
             }
             if layoutImplementationVersion == 0 {
