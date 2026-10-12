@@ -248,6 +248,16 @@ public final class LazyItemCollector {
 
     /// Return the list index for the given item ID, or nil.
     func index(for id: Any) -> Int? {
+        return index(where: { itemID, _ in itemID == id })
+    }
+
+    /// Return the list index of the item whose lazy item key is the given `composeBundleString`, or nil.
+    func index(forKey key: String) -> Int? {
+        // Rows without an ID map or ID aren't keyed by it
+        return index(where: { itemID, isKeyed in isKeyed && itemID != nil && composeBundleString(for: itemID) == key })
+    }
+
+    private func index(where matches: (Any?, Bool) -> Bool) -> Int? {
         var index = startItemIndex
         for content in self.content {
             switch content {
@@ -259,7 +269,7 @@ public final class LazyItemCollector {
                     } else {
                         itemID = i
                     }
-                    if itemID == id {
+                    if matches(itemID, idMap != nil) {
                         return index
                     }
                     index += 1
@@ -267,7 +277,7 @@ public final class LazyItemCollector {
             case .objectItems(let objects, let idMap, _):
                 for object in objects {
                     let itemID = idMap(object)
-                    if itemID == id {
+                    if matches(itemID, true) {
                         return index
                     }
                     index += 1
@@ -275,7 +285,7 @@ public final class LazyItemCollector {
             case .objectBindingItems(let binding, let idMap, _):
                 for object in binding.wrappedValue {
                     let itemID = idMap(object)
-                    if itemID == id {
+                    if matches(itemID, true) {
                         return index
                     }
                     index += 1

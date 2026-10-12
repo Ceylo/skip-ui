@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.material.ExperimentalMaterialApi
@@ -56,6 +57,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.SaverScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -229,6 +233,10 @@ public final class List : View, Renderable {
             }
             hadHeader.value = hasHeader
         }
+        // The list state's saver keeps an index, which lands on another row when the rows above it changed while
+        // the list was disposed: the late header above does, on every return from a navigation push. So save the
+        // first visible row's key too, and restore by it once the rows are known
+        let firstVisibleKey = rememberSaveable(saver: FirstVisibleKeySaver(listState: listState)) { FirstVisibleKey(pending: nil) }
         let reorderableState = rememberReorderableLazyListState(listState: listState, onMove: { from, to in
             // Trigger recompose on move, but don't read the trigger state until we're inside the list content to limit its scope
             itemCollector.value.move(from: from.index, to: to.index, trigger: { moveTrigger.value = $0 })
@@ -561,6 +569,15 @@ public final class List : View, Renderable {
                 }
             }
 
+            // Here, in the measure pass that first lays out the rows, so the restored index is never drawn.
+            // The restored offset is the saved row's
+            if let key = firstVisibleKey.pending, itemCollector.value.count > 0 {
+                firstVisibleKey.pending = nil
+                if let index = itemCollector.value.index(forKey: key), index != listState.firstVisibleItemIndex {
+                    listState.requestScrollToItem(index, scrollOffset: listState.firstVisibleItemScrollOffset)
+                }
+            }
+
             sectionChromeAnimationState.sectionBodyItemCounts = currentSectionBodyItemCounts
 
             let currentListItemCount = itemCollector.value.count
@@ -602,6 +619,34 @@ public final class List : View, Renderable {
         // Prefer explicit Section/ForEach identity so chrome animation state follows the section
         // across insertions and deletions instead of sticking to a numeric position.
         return "id-\(composeBundleString(for: sectionIdentity))"
+    }
+
+    /// A restored first visible row key not applied yet. Not snapshot state: it is written while measuring.
+    private final class FirstVisibleKey {
+        var pending: String?
+
+        init(pending: String?) {
+            self.pending = pending
+        }
+    }
+
+    /// Reads the first visible row's key when the list state is saved, rather than tracking it on every scroll.
+    private struct FirstVisibleKeySaver: Saver<FirstVisibleKey, Any> {
+        let listState: LazyListState
+
+        override func restore(value: Any) -> FirstVisibleKey? {
+            return FirstVisibleKey(pending: value as? String)
+        }
+
+        // SKIP DECLARE: override fun SaverScope.save(value: FirstVisibleKey): Any?
+        override func save(value: FirstVisibleKey) -> Any? {
+            if let pending = value.pending {
+                return pending
+            }
+            let index = listState.firstVisibleItemIndex
+            // Only a row key can match on restore; Compose's default key for an unkeyed row isn't a String
+            return listState.layoutInfo.visibleItemsInfo.firstOrNull({ $0.index == index })?.key as? String
+        }
     }
 
     /// Tracks section chrome placement separately from row animation state.

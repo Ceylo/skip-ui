@@ -111,6 +111,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performImeAction
@@ -568,6 +569,53 @@ final class SkipUITests: SkipUITestCase {
                         ForEach(0..<50) { index in
                             Text("Row \(index)")
                         }
+                    }
+                }
+                .tabItem {
+                    Label("First", systemImage: "house")
+                }
+                Text("Second Content")
+                    .tabItem {
+                        Label("Second", systemImage: "gear")
+                    }
+            }
+        }
+    }
+
+    func testListRestoresFirstVisibleRowByKey() throws {
+        #if !SKIP
+        throw XCTSkip("List state restoration is a Compose behavior")
+        #else
+        KeyedRestoreTestView.rows = Array(0..<40)
+        try testUI(view: {
+            KeyedRestoreTestView()
+        }, eval: { rule in
+            rule.waitForIdle()
+            rule.onNode(hasScrollAction()).performScrollToNode(hasText("Row 30"))
+            rule.waitForIdle()
+            rule.onNodeWithText("Row 30").assertIsDisplayed()
+
+            // Rows inserted above while the list is disposed must not move it
+            rule.onNodeWithText("Second").performClick()
+            rule.waitForIdle()
+            KeyedRestoreTestView.rows = [-3, -2, -1] + Array(0..<40)
+            rule.onNodeWithText("First").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Row 30").assertIsDisplayed()
+            rule.onNodeWithText("Row 27").assertDoesNotExist()
+        })
+        #endif
+    }
+
+    struct KeyedRestoreTestView: View {
+        static var rows: [Int] = []
+
+        var body: some View {
+            TabView {
+                List {
+                    ForEach(Self.rows, id: \.self) { row in
+                        Text("Row \(row)")
+                            .frame(height: 2000, alignment: .top)
                     }
                 }
                 .tabItem {
