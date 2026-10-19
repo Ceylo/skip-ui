@@ -564,7 +564,9 @@ public final class List : View, Renderable {
             for renderable in renderables {
                 if let factory = renderable as? LazyItemFactory, factory.shouldProduceLazyItems() {
                     factory.produceLazyItems(collector: itemCollector.value, modifiers: listOf(), level: 0)
-                } else {
+                } else if !renderable.isSwiftUIEmptyView {
+                    // No row for an empty view, as on iOS: leading zero-height rows put Compose's first visible index
+                    // past the top, so a list at its top is no longer recognised as such when the late header arrives
                     itemCollector.value.item(renderable, 0)
                 }
             }
