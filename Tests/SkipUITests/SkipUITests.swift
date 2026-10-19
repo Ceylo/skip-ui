@@ -697,6 +697,18 @@ final class SkipUITests: SkipUITestCase {
         #endif
     }
 
+    func testShadowCopyOfButtonIsHiddenFromAccessibility() throws {
+        #if !SKIP
+        throw XCTSkip("Compose semantics")
+        #else
+        try testUI(view: {
+            Button("Tap") { }.shadow(radius: 4, y: 8)
+        }, eval: { rule in
+            rule.onAllNodes(hasClickAction()).assertCountEquals(1)
+        })
+        #endif
+    }
+
     // Unlike the bridged `.task`, `List`/`ScrollView` run a refresh action in a Compose coroutine scope,
     // whose cancellation is a real coroutine cancellation.
     func testBridgedRefreshActionCancelledWithItsCoroutine() throws {

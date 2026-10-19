@@ -11,6 +11,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 #endif
 
 // SKIP @bridge
@@ -50,7 +51,7 @@ public struct GeometryReader : View, Renderable {
                     // reads (0, 0) until then. Unbounded on either axis (inside a scroll axis) would
                     // report `Constraints.Infinity` as the size, so there we keep waiting.
                     let framePx = Rect(left: Float(0.0), top: Float(0.0), right: Float(constraints.maxWidth), bottom: Float(constraints.maxHeight))
-                    let proxy = GeometryProxy(globalFramePx: framePx, density: LocalDensity.current, safeArea: EnvironmentValues.shared._safeArea)
+                    let proxy = GeometryProxy(sizePx: IntSize(constraints.maxWidth, constraints.maxHeight), globalFramePx: framePx, density: LocalDensity.current, safeArea: EnvironmentValues.shared._safeArea)
                     content(proxy).Compose(context.content())
                 }
             }
