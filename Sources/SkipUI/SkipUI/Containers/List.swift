@@ -235,8 +235,8 @@ public final class List : View, Renderable {
         }
         // The list state's saver keeps an index, which lands on another row when the rows above it changed while
         // the list was disposed: the late header above does, on every return from a navigation push. So save the
-        // first visible row's key too, and restore by it once the rows are known
-        let firstVisibleKey = rememberSaveable(saver: FirstVisibleKeySaver(listState: listState)) { FirstVisibleKey(pending: nil) }
+        // first visible keyed row and its offset too, and restore by it once the rows are known
+        let firstVisibleKey = rememberSaveable(saver: FirstVisibleKeySaver(listState: listState, itemCollector: itemCollector)) { FirstVisibleKey(pending: nil, offset: 0) }
         let reorderableState = rememberReorderableLazyListState(listState: listState, onMove: { from, to in
             // Trigger recompose on move, but don't read the trigger state until we're inside the list content to limit its scope
             itemCollector.value.move(from: from.index, to: to.index, trigger: { moveTrigger.value = $0 })
@@ -575,8 +575,8 @@ public final class List : View, Renderable {
             // The restored offset is the saved row's
             if let key = firstVisibleKey.pending, itemCollector.value.count > 0 {
                 firstVisibleKey.pending = nil
-                if let index = itemCollector.value.index(forKey: key), index != listState.firstVisibleItemIndex {
-                    listState.requestScrollToItem(index, scrollOffset: listState.firstVisibleItemScrollOffset)
+                if let index = itemCollector.value.index(forKey: key), index != listState.firstVisibleItemIndex || firstVisibleKey.offset != listState.firstVisibleItemScrollOffset {
+                    listState.requestScrollToItem(index, scrollOffset: firstVisibleKey.offset)
                 }
             }
 
@@ -626,28 +626,42 @@ public final class List : View, Renderable {
     /// A restored first visible row key not applied yet. Not snapshot state: it is written while measuring.
     private final class FirstVisibleKey {
         var pending: String?
+        /// The scroll offset that puts the pending row back where it was: negative when it was below the top.
+        var offset: Int
 
-        init(pending: String?) {
+        init(pending: String?, offset: Int) {
             self.pending = pending
+            self.offset = offset
         }
     }
 
     /// Reads the first visible row's key when the list state is saved, rather than tracking it on every scroll.
     private struct FirstVisibleKeySaver: Saver<FirstVisibleKey, Any> {
         let listState: LazyListState
+        let itemCollector: MutableState<LazyItemCollector>
 
         override func restore(value: Any) -> FirstVisibleKey? {
-            return FirstVisibleKey(pending: value as? String)
+            guard let saved = value as? String, let offset = saved.substringBefore(":").toIntOrNull() else {
+                return FirstVisibleKey(pending: nil, offset: 0)
+            }
+            return FirstVisibleKey(pending: saved.substringAfter(":"), offset: offset)
         }
 
         // SKIP DECLARE: override fun SaverScope.save(value: FirstVisibleKey): Any?
         override func save(value: FirstVisibleKey) -> Any? {
             if let pending = value.pending {
-                return pending
+                return "\(value.offset):\(pending)"
             }
-            let index = listState.firstVisibleItemIndex
-            // Only a row key can match on restore; Compose's default key for an unkeyed row isn't a String
-            return listState.layoutInfo.visibleItemsInfo.firstOrNull({ $0.index == index })?.key as? String
+            // The first visible row that the restore can find by key, which section chrome, keyed or not, isn't:
+            // a section header scrolled partly out would otherwise restore by index, which the late header shifts
+            let first = listState.firstVisibleItemIndex
+            let collector = itemCollector.value
+            for item in listState.layoutInfo.visibleItemsInfo {
+                if item.index >= first, let key = item.key as? String, collector.index(forKey: key) != nil {
+                    return "\(-item.offset):\(key)"
+                }
+            }
+            return nil
         }
     }
 
