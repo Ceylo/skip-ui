@@ -227,7 +227,16 @@ final class ImageTests: XCSnapshotTestCase {
 
     /// 4×1: two red pixels, then two blue.
     func overflowingImage() throws -> Image {
-        let data = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAABCAIAAAB2XpiaAAAAEElEQVR4nGP4z8AARGDiPwAZ8wP9mthzMQAAAABJRU5ErkJggg=="))
+        try image(base64: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAABCAIAAAB2XpiaAAAAEElEQVR4nGP4z8AARGDiPwAZ8wP9mthzMQAAAABJRU5ErkJggg==")
+    }
+
+    /// 1×4: two red pixels above two blue.
+    func tallOverflowingImage() throws -> Image {
+        try image(base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAECAIAAADAusJtAAAAEUlEQVR4nGP4z8DAAMIQ8j8AH/AD/ZWsymgAAAAASUVORK5CYII=")
+    }
+
+    func image(base64: String) throws -> Image {
+        let data = try XCTUnwrap(Data(base64Encoded: base64))
         #if SKIP || canImport(UIKit)
         return Image(uiImage: try XCTUnwrap(UIImage(data: data)))
         #else
@@ -249,6 +258,27 @@ final class ImageTests: XCSnapshotTestCase {
 
     func testFilledImageOverflowTrailingAligned() throws {
         XCTAssertEqual(try renderFilled(alignment: .trailing), "0000FF 0000FF")
+    }
+
+    func testFilledImageOverflowTopAligned() throws {
+        let view = try tallOverflowingImage().resizable().aspectRatio(contentMode: .fill).frame(width: 1.0, height: 2.0, alignment: .top).clipped()
+        XCTAssertEqual(try render(view: view).pixmap, "FF0000\nFF0000")
+    }
+
+    func testFilledImageOverflowNearestFrameAligns() throws {
+        let view = try overflowingImage().resizable().aspectRatio(contentMode: .fill).frame(width: 2.0, height: 1.0).frame(width: 2.0, height: 1.0, alignment: .leading).clipped()
+        XCTAssertEqual(try render(view: view).pixmap, "FF0000 0000FF")
+    }
+
+    func testFilledImageOverflowFrameAlignsOnlyItsAxes() throws {
+        let view = try overflowingImage().resizable().aspectRatio(contentMode: .fill).frame(height: 1.0).frame(width: 2.0, alignment: .leading).clipped()
+        XCTAssertEqual(try render(view: view).pixmap, "FF0000 FF0000")
+    }
+
+    func testFilledImageOverflowInOverlayAlignedByOverlay() throws {
+        let image = try overflowingImage()
+        let view = Color.clear.frame(width: 2.0, height: 1.0).overlay { image.resizable().aspectRatio(contentMode: .fill) }.clipped().frame(width: 2.0, height: 1.0, alignment: .leading)
+        XCTAssertEqual(try render(view: view).pixmap, "FF0000 0000FF")
     }
 
     func testRenderVectorDrawableResource() {

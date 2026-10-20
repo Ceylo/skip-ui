@@ -41,7 +41,9 @@ import androidx.compose.ui.unit.dp
     ComposeContainer(modifier: modifier, fixedWidth: width != nil, fixedHeight: height != nil) { modifier in
         let contentContext = context.content()
         Box(modifier: modifier, contentAlignment: alignment.asComposeAlignment()) {
-            RenderAligned(content: content, context: contentContext, alignment: alignment)
+            ProvideFrameAlignment(alignment, constrainsWidth: width != nil, constrainsHeight: height != nil) {
+                content.Render(context: contentContext)
+            }
         }
     }
 }
@@ -51,19 +53,24 @@ import androidx.compose.ui.unit.dp
     ComposeFlexibleContainer(modifier: context.modifier, flexibleWidthIdeal: flexibleLayoutFloat(idealWidth), flexibleWidthMin: flexibleLayoutFloat(minWidth), flexibleWidthMax: flexibleLayoutFloat(maxWidth), flexibleHeightIdeal: flexibleLayoutFloat(idealHeight), flexibleHeightMin: flexibleLayoutFloat(minHeight), flexibleHeightMax: flexibleLayoutFloat(maxHeight)) { modifier in
         let contentContext = context.content()
         Box(modifier: modifier, contentAlignment: alignment.asComposeAlignment()) {
-            RenderAligned(content: content, context: contentContext, alignment: alignment)
+            ProvideFrameAlignment(alignment, constrainsWidth: minWidth != nil || maxWidth != nil, constrainsHeight: minHeight != nil || maxHeight != nil) {
+                content.Render(context: contentContext)
+            }
         }
     }
 }
 
 /// `Box` centers content that overflows it, whatever its alignment, so an image filling a
-/// smaller frame places its own overflow by the frame's alignment instead.
-@Composable private func RenderAligned(content: Renderable, context: ComposeContext, alignment: Alignment) {
+/// smaller frame places its own overflow by the frame's alignment instead — on the axes the
+/// frame sizes. Overlays and backgrounds size their content too, so they provide theirs.
+@Composable func ProvideFrameAlignment(_ alignment: Alignment, constrainsWidth: Bool = true, constrainsHeight: Bool = true, content: @Composable () -> Void) {
+    let inherited = EnvironmentValues.shared._frameAlignment
+    let provided = Alignment(horizontal: constrainsWidth ? alignment.horizontal : inherited.horizontal, vertical: constrainsHeight ? alignment.vertical : inherited.vertical)
     EnvironmentValues.shared.setValues {
-        $0.set_frameAlignment(alignment)
+        $0.set_frameAlignment(provided)
         return ComposeResult.ok
     } in: {
-        content.Render(context: context)
+        content()
     }
 }
 
@@ -125,7 +132,9 @@ private func flexibleLayoutFloat(_ value: CGFloat?) -> Float? {
             target(context.content())
             // Dependent view lays out with fixed bounds dictated by the target view size
             ComposeContainer(fixedWidth: true, fixedHeight: true) { modifier in
-                dependent(context.content(modifier: modifier))
+                ProvideFrameAlignment(alignment) {
+                    dependent(context.content(modifier: modifier))
+                }
             }
         }) { measurables, constraints in
             guard !measurables.isEmpty() else {

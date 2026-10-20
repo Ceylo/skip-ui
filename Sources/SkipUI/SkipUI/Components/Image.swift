@@ -1227,7 +1227,7 @@ private let contentsCache: [AssetKey: URL?] = [:]
 /// image arrives after this composition — see ``ImageHolder`` — then lays out in the frame
 /// it arrives in rather than in the recomposition after it.
 @Composable private func ImageLayout(intrinsicSize: () -> Size, aspectRatio: Double?, contentMode: ContentMode?, image: @Composable () -> Void) {
-    let alignment = EnvironmentValues.shared._frameAlignment ?? Alignment.center
+    let alignment = EnvironmentValues.shared._frameAlignment
     Layout(content = {
         image()
     }) { measurables, constraints in
