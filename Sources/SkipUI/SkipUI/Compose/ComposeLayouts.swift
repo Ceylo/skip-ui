@@ -59,6 +59,10 @@ import androidx.compose.ui.unit.dp
 /// `Box` centers content that overflows it, whatever its alignment, so an image filling a
 /// smaller frame places its own overflow by the frame's alignment instead.
 @Composable private func RenderAligned(content: Renderable, context: ComposeContext, alignment: Alignment) {
+    guard alignment != EnvironmentValues.shared._frameAlignment else {
+        content.Render(context: context)
+        return
+    }
     EnvironmentValues.shared.setValues {
         $0.set_frameAlignment(alignment)
         return ComposeResult.ok
