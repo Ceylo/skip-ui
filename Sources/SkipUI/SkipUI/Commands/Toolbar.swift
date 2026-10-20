@@ -631,6 +631,7 @@ struct ToolbarItems {
         var titleMenu: ToolbarTitleMenu? = nil
         let leading: kotlin.collections.MutableList<Renderable> = mutableListOf()
         let trailing: kotlin.collections.MutableList<Renderable> = mutableListOf()
+        let primaryActions: kotlin.collections.MutableList<Renderable> = mutableListOf()
         var principal: Renderable? = nil
         let bottom: kotlin.collections.MutableList<Renderable> = mutableListOf()
         for view in content {
@@ -647,12 +648,16 @@ struct ToolbarItems {
                         leading.add(renderable)
                     case .bottomBar:
                         bottom.add(renderable)
+                    case .primaryAction:
+                        primaryActions.add(renderable)
                     default:
                         trailing.add(renderable)
                     }
                 }
             }
         }
+        // SwiftUI keeps primary actions at the trailing edge
+        trailing.addAll(primaryActions)
         if let principal {
             leading.add(principal)
         }
