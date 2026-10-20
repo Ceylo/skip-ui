@@ -52,6 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -467,8 +468,9 @@ public final class List : View, Renderable {
                     for renderableIndex in 0..<headerRenderables.size {
                         let renderable = headerRenderables[renderableIndex]
                         if styling.style == .plain {
-                            stickyHeader { _ in
-                                RenderSectionHeader(content: renderable, context: itemContext, styling: styling, isTop: isTop)
+                            stickyHeader(contentType: Self.stickyHeaderContentType) { headerIndex in
+                                let headerModifier = Self.pinnedBelowSafeArea(headerIndex: headerIndex, listState: listState, safeAreaOffsetPx: headerSafeAreaOffsetPx)
+                                RenderSectionHeader(content: renderable, context: itemContext, modifier: headerModifier, styling: styling, isTop: isTop)
                             }
                         } else {
                             if !isTop && renderableIndex == 0 {
@@ -621,6 +623,31 @@ public final class List : View, Renderable {
         // Prefer explicit Section/ForEach identity so chrome animation state follows the section
         // across insertions and deletions instead of sticking to a numeric position.
         return "id-\(composeBundleString(for: sectionIdentity))"
+    }
+
+    private static let stickyHeaderContentType = "skip.ui.List.stickyHeader"
+
+    /// Compose pins a sticky header to the viewport's top, under the safe area this list extends into; iOS pins it below.
+    private static func pinnedBelowSafeArea(headerIndex: Int, listState: LazyListState, safeAreaOffsetPx: State<Int>) -> Modifier {
+        return Modifier.offset {
+            let inset = -safeAreaOffsetPx.value
+            let layoutInfo = listState.layoutInfo
+            let items = layoutInfo.visibleItemsInfo
+            guard inset > 0, let header = items.firstOrNull({ $0.index == headerIndex }) else {
+                return IntOffset(0, 0)
+            }
+            var natural = header.offset
+            if let firstRow = items.firstOrNull({ $0.index == headerIndex + 1 }) {
+                natural = firstRow.offset - layoutInfo.mainAxisItemSpacing - header.size
+            } else if items.any({ $0.index > headerIndex }) {
+                natural = Int.min / 2 // Its rows are above the viewport
+            }
+            var target = max(natural, layoutInfo.viewportStartOffset + inset)
+            if let nextHeader = items.firstOrNull({ $0.index > headerIndex && $0.contentType == stickyHeaderContentType }) {
+                target = min(target, nextHeader.offset - header.size)
+            }
+            return IntOffset(0, max(0, target - header.offset))
+        }
     }
 
     /// A restored first visible row key not applied yet. Not snapshot state: it is written while measuring.
