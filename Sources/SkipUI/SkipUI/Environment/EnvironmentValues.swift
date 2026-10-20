@@ -726,6 +726,12 @@ extension EnvironmentValues {
         set { setBuiltinValue(key: "_foregroundStyle", value: newValue is ForegroundStyle ? nil : newValue, defaultValue: { nil }) }
     }
 
+    /// The alignment of the nearest enclosing `frame`, which places an image that overflows it.
+    var _frameAlignment: Alignment? {
+        get { builtinValue(key: "_frameAlignment", defaultValue: { nil }) as! Alignment? }
+        set { setBuiltinValue(key: "_frameAlignment", value: newValue, defaultValue: { nil }) }
+    }
+
     var _isEdgeToEdge: Bool? {
         get { builtinValue(key: "_isEdgeToEdge", defaultValue: { nil }) as! Bool? }
         set { setBuiltinValue(key: "_isEdgeToEdge", value: newValue, defaultValue: { nil }) }

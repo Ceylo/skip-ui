@@ -225,6 +225,32 @@ final class ImageTests: XCSnapshotTestCase {
     }
 
 
+    /// 4×1: two red pixels, then two blue.
+    func overflowingImage() throws -> Image {
+        let data = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAABCAIAAAB2XpiaAAAAEElEQVR4nGP4z8AARGDiPwAZ8wP9mthzMQAAAABJRU5ErkJggg=="))
+        #if SKIP || canImport(UIKit)
+        return Image(uiImage: try XCTUnwrap(UIImage(data: data)))
+        #else
+        return Image(nsImage: try XCTUnwrap(NSImage(data: data)))
+        #endif
+    }
+
+    func renderFilled(alignment: Alignment) throws -> String {
+        try render(view: overflowingImage().resizable().aspectRatio(contentMode: .fill).frame(width: 2.0, height: 1.0, alignment: alignment).clipped()).pixmap
+    }
+
+    func testFilledImageOverflowLeadingAligned() throws {
+        XCTAssertEqual(try renderFilled(alignment: .leading), "FF0000 FF0000")
+    }
+
+    func testFilledImageOverflowCenterAligned() throws {
+        XCTAssertEqual(try renderFilled(alignment: .center), "FF0000 0000FF")
+    }
+
+    func testFilledImageOverflowTrailingAligned() throws {
+        XCTAssertEqual(try renderFilled(alignment: .trailing), "0000FF 0000FF")
+    }
+
     func testRenderVectorDrawableResource() {
         #if SKIP
         throw XCTSkip("Resources in res/ are no longer copied to the project, so SkipUITests/Skip/res/values/strings.xml and SkipUITests/Skip/res/drawable/battery_charging.xml are no longer being found")
