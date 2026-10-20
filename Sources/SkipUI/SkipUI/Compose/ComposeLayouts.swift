@@ -41,7 +41,7 @@ import androidx.compose.ui.unit.dp
     ComposeContainer(modifier: modifier, fixedWidth: width != nil, fixedHeight: height != nil) { modifier in
         let contentContext = context.content()
         Box(modifier: modifier, contentAlignment: alignment.asComposeAlignment()) {
-            content.Render(context: contentContext)
+            RenderAligned(content: content, context: contentContext, alignment: alignment)
         }
     }
 }
@@ -51,8 +51,19 @@ import androidx.compose.ui.unit.dp
     ComposeFlexibleContainer(modifier: context.modifier, flexibleWidthIdeal: flexibleLayoutFloat(idealWidth), flexibleWidthMin: flexibleLayoutFloat(minWidth), flexibleWidthMax: flexibleLayoutFloat(maxWidth), flexibleHeightIdeal: flexibleLayoutFloat(idealHeight), flexibleHeightMin: flexibleLayoutFloat(minHeight), flexibleHeightMax: flexibleLayoutFloat(maxHeight)) { modifier in
         let contentContext = context.content()
         Box(modifier: modifier, contentAlignment: alignment.asComposeAlignment()) {
-            content.Render(context: contentContext)
+            RenderAligned(content: content, context: contentContext, alignment: alignment)
         }
+    }
+}
+
+/// `Box` centers content that overflows it, whatever its alignment, so an image filling a
+/// smaller frame places its own overflow by the frame's alignment instead.
+@Composable private func RenderAligned(content: Renderable, context: ComposeContext, alignment: Alignment) {
+    EnvironmentValues.shared.setValues {
+        $0.set_frameAlignment(alignment)
+        return ComposeResult.ok
+    } in: {
+        content.Render(context: context)
     }
 }
 
@@ -369,7 +380,7 @@ private func constraint(_ value: Int, adding: Int, atLeast: Int) -> Int {
     return max(atLeast, value + adding)
 }
 
-private func placeContent(width: Int, height: Int, inWidth: Int, inHeight: Int, alignment: Alignment) -> (Int, Int) {
+func placeContent(width: Int, height: Int, inWidth: Int, inHeight: Int, alignment: Alignment) -> (Int, Int) {
     let centerX = (inWidth - width) / 2
     let centerY = (inHeight - height) / 2
     switch alignment {
