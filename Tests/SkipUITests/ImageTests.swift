@@ -189,6 +189,15 @@ final class ImageTests: XCSnapshotTestCase {
         #endif
     }
 
+    func testFolderSymbolMapsToMaterialIcon() throws {
+        #if !SKIP
+        throw XCTSkip("Symbol names are only mapped to Material icons on Android")
+        #else
+        let folder = Image.composeImageVector(named: "folder")
+        XCTAssertNotNil(folder)
+        #endif
+    }
+
     func testRenderPNGImageData() throws {
         func save(_ base64EncodedImage: String) throws -> URL {
             let uri = URL(fileURLWithPath: NSTemporaryDirectory() + "/testRenderImageData-\(UUID().uuidString).png")

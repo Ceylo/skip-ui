@@ -693,6 +693,7 @@ public struct Image : View, Renderable, Equatable {
         case "heart": return "Icons.Outlined.FavoriteBorder" //􀊴
         case "heart.fill": return "Icons.Outlined.Favorite" //􀊵
         case "exclamationmark.bubble": return "Icons.Outlined.Feedback" //􀌬
+        case "folder": return "Icons.Outlined.Folder"
         case "rectangle.grid.2x2": return "Icons.Outlined.GridView"
         case "house": return "Icons.Outlined.Home" //􀎞
         case "info.circle": return "Icons.Outlined.Info" //􀅴
@@ -792,6 +793,7 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Outlined.FavoriteBorder": return Icons.Outlined.FavoriteBorder
         case "Icons.Outlined.Favorite": return Icons.Outlined.Favorite
         case "Icons.Outlined.Feedback": return Icons.Outlined.Feedback
+        case "Icons.Outlined.Folder": return Icons.Outlined.Folder
         case "Icons.Outlined.GridView": return Icons.Outlined.GridView
         case "Icons.Outlined.Home": return Icons.Outlined.Home
         case "Icons.Outlined.Info": return Icons.Outlined.Info
