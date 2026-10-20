@@ -52,6 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -235,8 +236,8 @@ public final class List : View, Renderable {
         }
         // The list state's saver keeps an index, which lands on another row when the rows above it changed while
         // the list was disposed: the late header above does, on every return from a navigation push. So save the
-        // first visible row's key too, and restore by it once the rows are known
-        let firstVisibleKey = rememberSaveable(saver: FirstVisibleKeySaver(listState: listState)) { FirstVisibleKey(pending: nil) }
+        // first visible keyed row and its offset too, and restore by it once the rows are known
+        let firstVisibleKey = rememberSaveable(saver: FirstVisibleKeySaver(listState: listState, itemCollector: itemCollector)) { FirstVisibleKey(pending: nil, offset: 0) }
         let reorderableState = rememberReorderableLazyListState(listState: listState, onMove: { from, to in
             // Trigger recompose on move, but don't read the trigger state until we're inside the list content to limit its scope
             itemCollector.value.move(from: from.index, to: to.index, trigger: { moveTrigger.value = $0 })
@@ -480,8 +481,9 @@ public final class List : View, Renderable {
                     for renderableIndex in 0..<headerRenderables.size {
                         let renderable = headerRenderables[renderableIndex]
                         if styling.style == .plain {
-                            stickyHeader { _ in
-                                RenderSectionHeader(content: renderable, context: itemContext, styling: styling, isTop: isTop)
+                            stickyHeader(contentType: Self.stickyHeaderContentType) { headerIndex in
+                                let headerModifier = Self.pinnedBelowSafeArea(headerIndex: headerIndex, listState: listState, safeAreaOffsetPx: headerSafeAreaOffsetPx)
+                                RenderSectionHeader(content: renderable, context: itemContext, modifier: headerModifier, styling: styling, isTop: isTop)
                             }
                         } else {
                             if !isTop && renderableIndex == 0 {
@@ -560,7 +562,9 @@ public final class List : View, Renderable {
             for renderable in renderables {
                 if let factory = renderable as? LazyItemFactory, factory.shouldProduceLazyItems() {
                     factory.produceLazyItems(collector: itemCollector.value, modifiers: listOf(), level: 0)
-                } else {
+                } else if !renderable.isSwiftUIEmptyView {
+                    // No row for an empty view, as on iOS: leading zero-height rows put Compose's first visible index
+                    // past the top, so a list at its top is no longer recognised as such when the late header arrives
                     itemCollector.value.item(renderable, 0)
                 }
             }
@@ -569,8 +573,8 @@ public final class List : View, Renderable {
             // The restored offset is the saved row's
             if let key = firstVisibleKey.pending, itemCollector.value.count > 0 {
                 firstVisibleKey.pending = nil
-                if let index = itemCollector.value.index(forKey: key), index != listState.firstVisibleItemIndex {
-                    listState.requestScrollToItem(index, scrollOffset: listState.firstVisibleItemScrollOffset)
+                if let index = itemCollector.value.index(forKey: key), index != listState.firstVisibleItemIndex || firstVisibleKey.offset != listState.firstVisibleItemScrollOffset {
+                    listState.requestScrollToItem(index, scrollOffset: firstVisibleKey.offset)
                 }
             }
 
@@ -644,31 +648,70 @@ public final class List : View, Renderable {
         return "id-\(composeBundleString(for: sectionIdentity))"
     }
 
+    private static let stickyHeaderContentType = "skip.ui.List.stickyHeader"
+
+    /// Compose pins a sticky header to the viewport's top, under the safe area this list extends into; iOS pins it below.
+    private static func pinnedBelowSafeArea(headerIndex: Int, listState: LazyListState, safeAreaOffsetPx: State<Int>) -> Modifier {
+        return Modifier.offset {
+            let inset = -safeAreaOffsetPx.value
+            let layoutInfo = listState.layoutInfo
+            let items = layoutInfo.visibleItemsInfo
+            guard inset > 0, let header = items.firstOrNull({ $0.index == headerIndex }) else {
+                return IntOffset(0, 0)
+            }
+            var natural = header.offset
+            if let firstRow = items.firstOrNull({ $0.index == headerIndex + 1 }) {
+                natural = firstRow.offset - layoutInfo.mainAxisItemSpacing - header.size
+            } else if items.any({ $0.index > headerIndex }) {
+                natural = Int.min / 2 // Its rows are above the viewport
+            }
+            var target = max(natural, layoutInfo.viewportStartOffset + inset)
+            if let nextHeader = items.firstOrNull({ $0.index > headerIndex && $0.contentType == stickyHeaderContentType }) {
+                target = min(target, nextHeader.offset - header.size)
+            }
+            return IntOffset(0, max(0, target - header.offset))
+        }
+    }
+
     /// A restored first visible row key not applied yet. Not snapshot state: it is written while measuring.
     private final class FirstVisibleKey {
         var pending: String?
+        /// The scroll offset that puts the pending row back where it was: negative when it was below the top.
+        var offset: Int
 
-        init(pending: String?) {
+        init(pending: String?, offset: Int) {
             self.pending = pending
+            self.offset = offset
         }
     }
 
     /// Reads the first visible row's key when the list state is saved, rather than tracking it on every scroll.
     private struct FirstVisibleKeySaver: Saver<FirstVisibleKey, Any> {
         let listState: LazyListState
+        let itemCollector: MutableState<LazyItemCollector>
 
         override func restore(value: Any) -> FirstVisibleKey? {
-            return FirstVisibleKey(pending: value as? String)
+            guard let saved = value as? String, let offset = saved.substringBefore(":").toIntOrNull() else {
+                return FirstVisibleKey(pending: nil, offset: 0)
+            }
+            return FirstVisibleKey(pending: saved.substringAfter(":"), offset: offset)
         }
 
         // SKIP DECLARE: override fun SaverScope.save(value: FirstVisibleKey): Any?
         override func save(value: FirstVisibleKey) -> Any? {
             if let pending = value.pending {
-                return pending
+                return "\(value.offset):\(pending)"
             }
-            let index = listState.firstVisibleItemIndex
-            // Only a row key can match on restore; Compose's default key for an unkeyed row isn't a String
-            return listState.layoutInfo.visibleItemsInfo.firstOrNull({ $0.index == index })?.key as? String
+            // The first visible row that the restore can find by key, which section chrome, keyed or not, isn't:
+            // a section header scrolled partly out would otherwise restore by index, which the late header shifts
+            let first = listState.firstVisibleItemIndex
+            let collector = itemCollector.value
+            for item in listState.layoutInfo.visibleItemsInfo {
+                if item.index >= first, let key = item.key as? String, collector.index(forKey: key) != nil {
+                    return "\(-item.offset):\(key)"
+                }
+            }
+            return nil
         }
     }
 

@@ -1874,7 +1874,16 @@ public struct NavigationLink : View, Renderable {
     #if SKIP
     @Composable override func Render(context: ComposeContext) {
         let isEnabled = (value != nil || destination != nil) && EnvironmentValues.shared.isEnabled
-        Button.RenderButton(label: label, context: context, isEnabled: isEnabled, action: navigationAction())
+        // Nested in a list row rather than being the row: iOS still draws it as a row, untinted.
+        let buttonStyle = EnvironmentValues.shared._buttonStyle
+        if EnvironmentValues.shared._placement.contains(ViewPlacement.listItem) && (buttonStyle == nil || buttonStyle == .automatic) {
+            let action = navigationAction()
+            ComposeContainer(modifier: context.modifier) { modifier in
+                Button.RenderTextButton(label: label, context: context.content(modifier: modifier), isPlain: true, isEnabled: isEnabled, action: action)
+            }
+        } else {
+            Button.RenderButton(label: label, context: context, isEnabled: isEnabled, action: navigationAction())
+        }
     }
 
     @Composable override func shouldRenderListItem(context: ComposeContext) -> (Bool, (() -> Void)?) {

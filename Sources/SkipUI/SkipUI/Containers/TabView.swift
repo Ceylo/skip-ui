@@ -976,7 +976,7 @@ public struct Tab : TabContent, Renderable {
                 BadgedBox(
                     badge: {
                         Badge(modifier: Modifier.offset(x: 8.dp, y: -4.dp)) {
-                            badge.foregroundStyle(Color.white).Render(context: context)
+                            badge.foregroundStyle(Color(colorImpl: { MaterialTheme.colorScheme.onError })).Render(context: context)
                         }
                     }
                 ) {
