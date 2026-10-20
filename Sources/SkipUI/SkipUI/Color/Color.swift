@@ -137,6 +137,61 @@ public struct Color: ShapeStyle, Renderable, Hashable {
         self.init(name, bundle: bridgedBundle as? Bundle)
     }
 
+    /// A role of the current Material color scheme, named as its `ColorScheme` property.
+    // SKIP @bridge
+    public static func material(bridgedRole role: String) -> Color {
+        #if SKIP
+        return Color(colorImpl: { materialColor(role: role) })
+        #else
+        fatalError()
+        #endif
+    }
+
+    #if SKIP
+    @Composable private static func materialColor(role: String) -> androidx.compose.ui.graphics.Color {
+        let scheme = MaterialTheme.colorScheme
+        switch role {
+        case "primary": return scheme.primary
+        case "onPrimary": return scheme.onPrimary
+        case "primaryContainer": return scheme.primaryContainer
+        case "onPrimaryContainer": return scheme.onPrimaryContainer
+        case "inversePrimary": return scheme.inversePrimary
+        case "secondary": return scheme.secondary
+        case "onSecondary": return scheme.onSecondary
+        case "secondaryContainer": return scheme.secondaryContainer
+        case "onSecondaryContainer": return scheme.onSecondaryContainer
+        case "tertiary": return scheme.tertiary
+        case "onTertiary": return scheme.onTertiary
+        case "tertiaryContainer": return scheme.tertiaryContainer
+        case "onTertiaryContainer": return scheme.onTertiaryContainer
+        case "background": return scheme.background
+        case "onBackground": return scheme.onBackground
+        case "surface": return scheme.surface
+        case "onSurface": return scheme.onSurface
+        case "surfaceVariant": return scheme.surfaceVariant
+        case "onSurfaceVariant": return scheme.onSurfaceVariant
+        case "surfaceTint": return scheme.surfaceTint
+        case "inverseSurface": return scheme.inverseSurface
+        case "inverseOnSurface": return scheme.inverseOnSurface
+        case "error": return scheme.error
+        case "onError": return scheme.onError
+        case "errorContainer": return scheme.errorContainer
+        case "onErrorContainer": return scheme.onErrorContainer
+        case "outline": return scheme.outline
+        case "outlineVariant": return scheme.outlineVariant
+        case "scrim": return scheme.scrim
+        case "surfaceBright": return scheme.surfaceBright
+        case "surfaceContainer": return scheme.surfaceContainer
+        case "surfaceContainerHigh": return scheme.surfaceContainerHigh
+        case "surfaceContainerHighest": return scheme.surfaceContainerHighest
+        case "surfaceContainerLow": return scheme.surfaceContainerLow
+        case "surfaceContainerLowest": return scheme.surfaceContainerLowest
+        case "surfaceDim": return scheme.surfaceDim
+        default: preconditionFailure("Unknown Material color role: \(role)")
+        }
+    }
+    #endif
+
     private static func clamp(_ value: Double) -> Float {
         return max(Float(0.0), min(Float(1.0), Float(value)))
     }
