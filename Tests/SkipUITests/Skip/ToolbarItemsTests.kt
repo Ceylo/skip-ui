@@ -11,7 +11,6 @@ import org.junit.Test
 class ToolbarItemsTests {
     @get:org.junit.Rule val rule = createAndroidComposeRule<ComponentActivity>()
 
-    /** SwiftUI keeps a primary action at the trailing edge, whatever the order the items were declared in. */
     @Test fun primaryActionStaysTrailingMost() {
         val primary = ToolbarItem(placement = ToolbarItemPlacement.primaryAction, content = { EmptyView() })
         val automatic = ToolbarItem(content = { EmptyView() })

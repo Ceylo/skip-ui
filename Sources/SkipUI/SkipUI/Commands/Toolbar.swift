@@ -656,7 +656,6 @@ struct ToolbarItems {
                 }
             }
         }
-        // SwiftUI keeps primary actions at the trailing edge
         trailing.addAll(primaryActions)
         if let principal {
             leading.add(principal)
