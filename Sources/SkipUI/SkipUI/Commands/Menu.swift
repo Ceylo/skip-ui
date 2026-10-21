@@ -213,6 +213,8 @@ public final class Menu : View, Renderable {
                             replaceMenu(isItemEnabled ? menu : Menu(bridgedContent: ModifiedContent(content: menu.content, modifier: DisabledModifier(true)), bridgedLabel: EmptyView(), primaryAction: nil))
                         }
                     }
+                } else if let picker = stripped as? Picker<Any> {
+                    picker.RenderMenuItems(context: context, replaceMenu: replaceMenu)
                 } else if stripped is Divider {
                     RenderMenuDivider()
                 } else {

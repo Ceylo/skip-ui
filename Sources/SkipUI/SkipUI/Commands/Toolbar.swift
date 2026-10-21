@@ -627,7 +627,7 @@ struct ToolbarItems {
     let content: [View]
 
     /// Proces our content items, dividing them into the locations at which they should render.
-    @Composable func Evaluate(context: ComposeContext) -> (titleMenu: ToolbarTitleMenu?, topLeading: kotlin.collections.List<Renderable>, topTrailing: kotlin.collections.List<Renderable>, bottom: kotlin.collections.List<Renderable>) {
+    @Composable func Evaluate(context: ComposeContext) -> (titleMenu: ToolbarTitleMenu?, topLeading: kotlin.collections.List<Renderable>, topTrailing: kotlin.collections.List<Renderable>, bottom: kotlin.collections.List<Renderable>, principal: Renderable?) {
         var titleMenu: ToolbarTitleMenu? = nil
         let leading: kotlin.collections.MutableList<Renderable> = mutableListOf()
         let trailing: kotlin.collections.MutableList<Renderable> = mutableListOf()
@@ -645,21 +645,18 @@ struct ToolbarItems {
                     case .principal:
                         principal = renderable
                     case .topBarLeading, .navigationBarLeading, .cancellationAction:
-                        leading.add(renderable)
+                        leading.add(Self.topBarItem(renderable))
                     case .bottomBar:
                         bottom.add(renderable)
                     case .primaryAction:
                         primaryActions.add(renderable)
                     default:
-                        trailing.add(renderable)
+                        trailing.add(Self.topBarItem(renderable))
                     }
                 }
             }
         }
         trailing.addAll(primaryActions)
-        if let principal {
-            leading.add(principal)
-        }
         // SwiftUI inserts a spacer before the last bottom item
         if bottom.size > 1 && !bottom.any({
             let stripped = $0.strip()
@@ -667,7 +664,15 @@ struct ToolbarItems {
         }) {
             bottom.add(1, Spacer())
         }
-        return (titleMenu, leading, trailing, bottom)
+        return (titleMenu, leading, trailing, bottom, principal)
+    }
+
+    /// In a top bar, a flexible spacer only separates item groups, as in SwiftUI, rather than filling the bar.
+    private static func topBarItem(_ renderable: Renderable) -> Renderable {
+        if let spacer = renderable as? ToolbarSpacer, spacer.sizing == .flexible {
+            return ToolbarSpacer(.fixed, placement: spacer.placement)
+        }
+        return renderable
     }
 }
 #endif

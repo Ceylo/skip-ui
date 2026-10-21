@@ -23,4 +23,31 @@ class ToolbarItemsTests {
             assertEquals(listOf(ToolbarItemPlacement.automatic, ToolbarItemPlacement.primaryAction), placements)
         }
     }
+
+    @Test fun flexibleSpacerIsFixedInTopBar() {
+        val spacer = ToolbarSpacer()
+        var sizings: kotlin.collections.List<SpacerSizing> = listOf()
+        rule.setContent {
+            val (_, _, trailing, _) = ToolbarItems(content = skip.lib.arrayOf<View>(spacer)).Evaluate(context = ComposeContext())
+            sizings = trailing.map { (it as ToolbarSpacer).sizing }
+        }
+        rule.runOnIdle {
+            assertEquals(listOf(SpacerSizing.fixed), sizings)
+        }
+    }
+
+    @Test fun principalReplacesTitle() {
+        val principal = ToolbarItem(placement = ToolbarItemPlacement.principal, content = { EmptyView() })
+        var leadingCount = -1
+        var hasPrincipal = false
+        rule.setContent {
+            val (_, leading, _, _, principalItem) = ToolbarItems(content = skip.lib.arrayOf<View>(principal)).Evaluate(context = ComposeContext())
+            leadingCount = leading.size
+            hasPrincipal = principalItem != null
+        }
+        rule.runOnIdle {
+            assertEquals(0, leadingCount)
+            assertEquals(true, hasPrincipal)
+        }
+    }
 }

@@ -670,6 +670,7 @@ public struct Image : View, Renderable, Equatable {
         case "arrow.forward": return "Icons.Outlined.ArrowForward" //􀰑
         case "arrow.up": return "Icons.Outlined.ArrowUpward" //􀄨
         case "arrowshape.turn.up.left": return "Icons.Outlined.Reply" //􀉌
+        case "archivebox": return "Icons.Outlined.Archive"
         case "book": return "Icons.Outlined.MenuBook" //􀉚
         case "person.text.rectangle": return "Icons.Outlined.Badge"
         case "barcode": return "Icons.Outlined.Badge"
@@ -683,6 +684,7 @@ public struct Image : View, Renderable, Equatable {
         case "checkmark": return "Icons.Outlined.Check" //􀆅
         case "xmark": return "Icons.Outlined.Clear" //􀆄
         case "pencil": return "Icons.Outlined.Create" //􀈊
+        case "square.and.pencil": return "Icons.Outlined.EditNote"
         case "barcode.viewfinder": return "Icons.Outlined.CropFree"
         case "calendar": return "Icons.Outlined.DateRange" //􀉉
         case "trash": return "Icons.Outlined.Delete" //􀈑
@@ -693,9 +695,11 @@ public struct Image : View, Renderable, Equatable {
         case "heart": return "Icons.Outlined.FavoriteBorder" //􀊴
         case "heart.fill": return "Icons.Outlined.Favorite" //􀊵
         case "exclamationmark.bubble": return "Icons.Outlined.Feedback" //􀌬
+        case "line.3.horizontal.decrease.circle": return "Icons.Outlined.FilterList"
         case "folder": return "Icons.Outlined.Folder"
         case "rectangle.grid.2x2": return "Icons.Outlined.GridView"
         case "house": return "Icons.Outlined.Home" //􀎞
+        case "tray": return "Icons.Outlined.Inbox"
         case "info.circle": return "Icons.Outlined.Info" //􀅴
         case "text.badge.star": return "Icons.Outlined.Info" //􀋼
         case "chevron.down": return "Icons.Outlined.KeyboardArrowDown" //􀆈
@@ -735,10 +739,12 @@ public struct Image : View, Renderable, Equatable {
         case "checkmark.circle.fill": return "Icons.Filled.CheckCircle" //􀁣
         case "trash.fill": return "Icons.Filled.Delete" //􀈒
         case "envelope.fill": return "Icons.Filled.Email" //􀍖
+        case "line.3.horizontal.decrease.circle.fill": return "Icons.Filled.FilterList"
         case "house.fill": return "Icons.Filled.Home" //􀎟
         case "info.circle.fill": return "Icons.Filled.Info" //􀅵
         case "location.fill": return "Icons.Filled.LocationOn" //􀋒
         case "lock.fill": return "Icons.Filled.Lock" //􀎡
+        case "message.badge.fill": return "Icons.Filled.MarkChatUnread"
         case "bell.fill": return "Icons.Filled.Notifications" //􀋚
         case "person.fill": return "Icons.Filled.Person" //􀉪
         case "mappin.circle.fill": return "Icons.Filled.Place" //􀜈
@@ -768,6 +774,7 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Outlined.ArrowDropDown": return Icons.Outlined.ArrowDropDown
         case "Icons.Outlined.ArrowForward": return Icons.Outlined.ArrowForward // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.ArrowForward
         case "Icons.Outlined.ArrowUpward": return Icons.Outlined.ArrowUpward
+        case "Icons.Outlined.Archive": return Icons.Outlined.Archive
         case "Icons.Outlined.Badge": return Icons.Outlined.Badge
         case "Icons.Outlined.BarChart": return Icons.Outlined.BarChart
         case "Icons.Outlined.BookmarkBorder": return Icons.Outlined.BookmarkBorder
@@ -786,6 +793,7 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Outlined.Delete": return Icons.Outlined.Delete
         case "Icons.Outlined.Done": return Icons.Outlined.Done
         case "Icons.Outlined.Edit": return Icons.Outlined.Edit
+        case "Icons.Outlined.EditNote": return Icons.Outlined.EditNote
         case "Icons.Outlined.Email": return Icons.Outlined.Email
         case "Icons.Outlined.ExitToApp": return Icons.Outlined.ExitToApp // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.ExitToApp
         case "Icons.Outlined.Explore": return Icons.Outlined.Explore
@@ -793,9 +801,11 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Outlined.FavoriteBorder": return Icons.Outlined.FavoriteBorder
         case "Icons.Outlined.Favorite": return Icons.Outlined.Favorite
         case "Icons.Outlined.Feedback": return Icons.Outlined.Feedback
+        case "Icons.Outlined.FilterList": return Icons.Outlined.FilterList
         case "Icons.Outlined.Folder": return Icons.Outlined.Folder
         case "Icons.Outlined.GridView": return Icons.Outlined.GridView
         case "Icons.Outlined.Home": return Icons.Outlined.Home
+        case "Icons.Outlined.Inbox": return Icons.Outlined.Inbox
         case "Icons.Outlined.Info": return Icons.Outlined.Info
         case "Icons.Outlined.KeyboardArrowDown": return Icons.Outlined.KeyboardArrowDown
         case "Icons.Outlined.KeyboardArrowLeft": return Icons.Outlined.KeyboardArrowLeft // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.KeyboardArrowLeft
@@ -851,6 +861,7 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Filled.Face": return Icons.Filled.Face
         case "Icons.Filled.FavoriteBorder": return Icons.Filled.FavoriteBorder
         case "Icons.Filled.Favorite": return Icons.Filled.Favorite
+        case "Icons.Filled.FilterList": return Icons.Filled.FilterList
         case "Icons.Filled.Home": return Icons.Filled.Home
         case "Icons.Filled.Info": return Icons.Filled.Info
         case "Icons.Filled.KeyboardArrowDown": return Icons.Filled.KeyboardArrowDown
@@ -860,6 +871,7 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Filled.List": return Icons.Filled.List // Compose 1.6 TODO: Icons.AutoMirrored.Filled.List
         case "Icons.Filled.LocationOn": return Icons.Filled.LocationOn
         case "Icons.Filled.Lock": return Icons.Filled.Lock
+        case "Icons.Filled.MarkChatUnread": return Icons.Filled.MarkChatUnread
         case "Icons.Filled.MailOutline": return Icons.Filled.MailOutline
         case "Icons.Filled.Menu": return Icons.Filled.Menu
         case "Icons.Filled.MoreVert": return Icons.Filled.MoreVert
