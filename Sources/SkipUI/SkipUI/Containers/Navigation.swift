@@ -280,7 +280,7 @@ public struct NavigationStack : View, Renderable {
         // content for each bar) prevents it from updating properly on recompose
         let toolbarContentReduced = toolbarContent.value.reduced
         let toolbarItems = ToolbarItems(content: toolbarContentReduced.content ?? [])
-        let (titleMenu, topLeadingItems, topTrailingItems, bottomItems) = toolbarItems.Evaluate(context: context)
+        let (titleMenu, topLeadingItems, topTrailingItems, bottomItems, principalItem) = toolbarItems.Evaluate(context: context)
 
         let showTopBar: Bool
         switch topBarPreferences?.visibility ?? Visibility.automatic {
@@ -289,7 +289,7 @@ public struct NavigationStack : View, Renderable {
         case .visible:
             showTopBar = true
         case .automatic:
-            showTopBar = !arguments.isRoot || hasTitle || topLeadingItems.size > 0 || topTrailingItems.size > 0
+            showTopBar = !arguments.isRoot || hasTitle || principalItem != nil || topLeadingItems.size > 0 || topTrailingItems.size > 0
         }
         let searchFieldPadding = 16.dp
         let density = LocalDensity.current
@@ -447,7 +447,9 @@ public struct NavigationStack : View, Renderable {
                             titleContentColor: MaterialTheme.colorScheme.onSurface
                         )
                         let topBarTitle: @Composable () -> Void = {
-                            if let titleMenu {
+                            if let principalItem {
+                                principalItem.Render(context: context.content())
+                            } else if let titleMenu {
                                 let menuModifier = Modifier.clickable(interactionSource: interactionSource, indication: nil, onClick: {
                                     titleMenu.toggleMenu()
                                 })
