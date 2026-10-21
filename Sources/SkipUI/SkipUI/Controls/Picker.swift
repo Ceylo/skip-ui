@@ -244,18 +244,28 @@ public final class Picker<SelectionValue> : View, Renderable {
         }
     }
 
-    @Composable private func RenderPickerSelectionMenu(taggedRenderables: kotlin.collections.List<Renderable>?, context: ComposeContext) {
+    /// Renders the options as items of an enclosing `Menu`, inline as SwiftUI does.
+    @Composable func RenderMenuItems(context: ComposeContext, replaceMenu: (Menu?) -> Void) {
+        Menu.RenderDropdownMenuItems(for: selectionMenuItems(taggedRenderables: nil, context: context), selection: selection.wrappedValue, context: context, replaceMenu: replaceMenu)
+    }
+
+    @Composable private func selectionMenuItems(taggedRenderables: kotlin.collections.List<Renderable>?, context: ComposeContext) -> kotlin.collections.List<Renderable> {
         // Create selectable views from the *content* of each tag view, preserving the enclosing tag
         let renderables = taggedRenderables ?? processPickerContent(content: content, selection: selection, context: context, requireTaggedRenderables: true).1 ?? listOf()
-        let menuItems = renderables.map {
+        return renderables.map {
             let renderable = $0 as Renderable // Let transpiler understand type
             let tagValue = TagModifier.on(content: renderable, role: .tag)?.value
+            let optionLabel = (renderable.strip() as? Button)?.label ?? renderable.asView()
             let button = Button(action: {
                 selection.wrappedValue = tagValue as! SelectionValue
                 noteSelectionChanged()
-            }, label: { renderable.asView() })
+            }, label: { optionLabel })
             return ModifiedContent(content: button as Renderable, modifier: TagModifier(value: tagValue, role: .tag))
         }
+    }
+
+    @Composable private func RenderPickerSelectionMenu(taggedRenderables: kotlin.collections.List<Renderable>?, context: ComposeContext) {
+        let menuItems = selectionMenuItems(taggedRenderables: taggedRenderables, context: context)
         DropdownMenu(expanded: isMenuExpanded?.value == true, onDismissRequest: { isMenuExpanded?.value = false }) {
             let coroutineScope = rememberCoroutineScope()
             Menu.RenderDropdownMenuItems(for: menuItems, selection: selection.wrappedValue, context: context, replaceMenu: { _ in
