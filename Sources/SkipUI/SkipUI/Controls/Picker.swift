@@ -245,8 +245,8 @@ public final class Picker<SelectionValue> : View, Renderable {
     }
 
     /// Renders the options as items of an enclosing `Menu`, inline as SwiftUI does.
-    @Composable func RenderMenuItems(context: ComposeContext, replaceMenu: (Menu?) -> Void) {
-        Menu.RenderDropdownMenuItems(for: selectionMenuItems(taggedRenderables: nil, context: context), selection: selection.wrappedValue, context: context, replaceMenu: replaceMenu)
+    @Composable func RenderMenuItems(context: ComposeContext, dividers: Menu.DividerState, replaceMenu: (Menu?) -> Void) -> Menu.DividerState {
+        return Menu.RenderDropdownMenuItems(for: selectionMenuItems(taggedRenderables: nil, context: context), selection: selection.wrappedValue, context: context, dividers: dividers, replaceMenu: replaceMenu)
     }
 
     @Composable private func selectionMenuItems(taggedRenderables: kotlin.collections.List<Renderable>?, context: ComposeContext) -> kotlin.collections.List<Renderable> {

@@ -156,16 +156,25 @@ public final class Menu : View, Renderable {
         return toggleMenu
     }
 
-    @Composable static func RenderDropdownMenuItems(for renderables: kotlin.collections.List<Renderable>, selection: Hashable? = nil, context: ComposeContext, replaceMenu: (Menu?) -> Void) {
+    /// As in SwiftUI, a divider is drawn only between two items, so a leading, trailing or
+    /// repeated `Divider` — a `Section`'s own included — draws nothing. It is returned
+    /// rather than held, so a nested section or picker carries it on.
+    struct DividerState {
+        var hasItem = false
+        var isPending = false
+    }
+
+    @discardableResult @Composable static func RenderDropdownMenuItems(for renderables: kotlin.collections.List<Renderable>, selection: Hashable? = nil, context: ComposeContext, dividers: DividerState = DividerState(), replaceMenu: (Menu?) -> Void) -> DividerState {
         // M3 hands a `DropdownMenuItem` `labelLarge` (14sp Medium), well under the body
         // text a SwiftUI menu item renders at. `Text.styleInfo` reads the environment
         // font before `LocalTextStyle`, so setting it here restores `bodyLarge` — and
         // menu icons, which size to the current text style, follow. A `.font()` on an
         // individual label still wins, being set closer to the `Text`.
-        EnvironmentValues.shared.setValues {
+        return EnvironmentValues.shared.setValuesWithReturn({
             $0.setfont(Font.body)
             return ComposeResult.ok
-        } in: {
+        }, in: {
+            var dividers = dividers
             for renderable in renderables {
                 var stripped = renderable.strip()
                 if let shareLink = stripped as? ShareLink {
@@ -182,6 +191,7 @@ public final class Menu : View, Renderable {
                 let itemModifier = accessibilityModifier(for: renderable, context: context)
                 let isItemEnabled = !isDisabled(renderable)
                 if let button = stripped as? Button {
+                    dividers = RenderPendingDivider(dividers)
                     let isSelected: Bool?
                     if let tagModifier = TagModifier.on(content: renderable, role: .tag) {
                         isSelected = tagModifier.value == selection
@@ -198,31 +208,43 @@ public final class Menu : View, Renderable {
                         replaceMenu(nil)
                     }
                 } else if let text = stripped as? Text {
+                    dividers = RenderPendingDivider(dividers)
                     DropdownMenuItem(text: { text.Render(context: context) }, onClick: {}, modifier: itemModifier, enabled: false)
                 } else if let section = stripped as? Section {
                     if let header = section.header {
+                        dividers = RenderPendingDivider(dividers)
                         DropdownMenuItem(text: { header.Compose(context: context) }, onClick: {}, modifier: itemModifier, enabled: false)
                     }
                     let sectionRenderables = section.content.Evaluate(context: context, options: 0)
-                    RenderDropdownMenuItems(for: sectionRenderables, context: context, replaceMenu: replaceMenu)
-                    RenderMenuDivider()
+                    dividers = RenderDropdownMenuItems(for: sectionRenderables, context: context, dividers: dividers, replaceMenu: replaceMenu)
+                    dividers.isPending = true
                 } else if let menu = stripped as? Menu {
                     if let button = menu.label.Evaluate(context: context, options: 0).firstOrNull()?.strip() as? Button {
+                        dividers = RenderPendingDivider(dividers)
                         RenderDropdownMenuItem(for: button.label, context: context, modifier: itemModifier) {
                             // As in SwiftUI, a disabled nested menu still opens, with all of its items disabled
                             replaceMenu(isItemEnabled ? menu : Menu(bridgedContent: ModifiedContent(content: menu.content, modifier: DisabledModifier(true)), bridgedLabel: EmptyView(), primaryAction: nil))
                         }
                     }
                 } else if let picker = stripped as? Picker<Any> {
-                    picker.RenderMenuItems(context: context, replaceMenu: replaceMenu)
+                    dividers = picker.RenderMenuItems(context: context, dividers: dividers, replaceMenu: replaceMenu)
                 } else if stripped is Divider {
-                    RenderMenuDivider()
+                    dividers.isPending = true
                 } else {
                     // maybe other view types?
+                    dividers = RenderPendingDivider(dividers)
                     renderable.Render(context: context)
                 }
             }
+            return dividers
+        })
+    }
+
+    @Composable private static func RenderPendingDivider(_ dividers: DividerState) -> DividerState {
+        if dividers.isPending && dividers.hasItem {
+            RenderMenuDivider()
         }
+        return DividerState(hasItem: true, isPending: false)
     }
 
     /// Walks `renderable`'s modifier chain and composes the `Modifier`
