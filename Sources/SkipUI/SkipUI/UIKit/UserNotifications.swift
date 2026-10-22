@@ -123,13 +123,13 @@ public final class UNUserNotificationCenter {
             .putInt("id", request.identifier.hashValue)
             .putString(NotificationWorker.identifierKey, request.identifier)
         
-        // As on iOS, a visible image is the thumbnail beside the text, and a hidden one only shows expanded.
-        // A lone visible image is the expanded picture too.
+        // A visible image is the thumbnail beside the text, and a hidden one shows only when expanded:
+        // a small image such as an avatar must not be blown up into the expanded picture.
         let images = request.content.attachments.filter { $0.type == "public.image" }
         if let thumbnail = images.first(where: { !$0.hidesThumbnail }) {
             dataBuilder.putString(NotificationWorker.largeIconKey, thumbnail.url.absoluteString)
         }
-        if let picture = images.first(where: { $0.hidesThumbnail }) ?? images.first {
+        if let picture = images.first(where: { $0.hidesThumbnail }) {
             dataBuilder.putString(NotificationWorker.bigPictureKey, picture.url.absoluteString)
         }
 
