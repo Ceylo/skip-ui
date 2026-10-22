@@ -9,7 +9,7 @@ let package = Package(
     ],
     dependencies: [ 
         .package(url: "https://github.com/skiptools/skip.git", from: "1.9.6"),
-        .package(url: "https://github.com/skiptools/skip-model.git", from: "1.7.7"),
+        .package(url: "https://github.com/Ceylo/skip-model.git", branch: "android"),
     ],
     targets: [
         .target(name: "SkipUI", dependencies: [.product(name: "SkipModel", package: "skip-model")], plugins: [.plugin(name: "skipstone", package: "skip")]),
@@ -23,7 +23,7 @@ let bridgeMode = (Context.environment["SKIP_BRIDGE"] ?? "0") != "0"
 let forceDylib = bridgeMode || (Context.environment["SKIP_DYNAMIC_LIBRARIES"] ?? "0") != "0"
 
 if bridgeMode {
-    package.dependencies += [.package(url: "https://github.com/skiptools/skip-bridge.git", "0.0.0"..<"2.0.0")]
+    package.dependencies += [.package(url: "https://github.com/Ceylo/skip-bridge.git", branch: "android")]
     package.targets.forEach({ target in
         target.dependencies += [.product(name: "SkipBridge", package: "skip-bridge")]
     })
