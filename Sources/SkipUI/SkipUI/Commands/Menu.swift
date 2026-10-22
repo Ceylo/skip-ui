@@ -158,7 +158,8 @@ public final class Menu : View, Renderable {
 
     /// As in SwiftUI, a divider is drawn only between two items, so a leading, trailing or
     /// repeated `Divider` — a `Section`'s own included — draws nothing. It is returned
-    /// rather than held, so a nested section or picker carries it on.
+    /// rather than held in an object: a composable returning a value has no restart
+    /// scope, so a recomposition never replays it from a later state.
     struct DividerState {
         var hasItem = false
         var isPending = false
