@@ -119,6 +119,72 @@ final class NotificationRequestTests: SkipUITestCase {
         XCTAssertEqual((workInfos.get(0) as! WorkInfo).initialDelayMillis, Int64(0))
         #endif
     }
+
+    func testAttachmentOptionsAsOnIOS() throws {
+        #if !SKIP
+        throw XCTSkip("UserNotifications' own attachments on Apple platforms")
+        #else
+        let image = try UNNotificationAttachment(identifier: "clear", url: URL(fileURLWithPath: "/tmp/a.JPG"), options: [UNNotificationAttachmentOptionsThumbnailHiddenKey: true])
+        XCTAssertEqual(image.type, "public.image")
+        XCTAssertTrue(image.hidesThumbnail)
+        let document = try UNNotificationAttachment(identifier: "doc", url: URL(fileURLWithPath: "/tmp/a.pdf"), options: nil)
+        XCTAssertEqual(document.type, "public.data")
+        XCTAssertFalse(document.hidesThumbnail)
+        #endif
+    }
+
+    func testDueRequestPostsAtOnceAndReplacesItsWork() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        let workManager = workManager()
+        enqueue("reminder", inDays: 1)
+
+        UNUserNotificationCenter.postRequest(identifier: "reminder", data: Data.Builder().putString("title", "Now").putInt("id", 42).build(), context: context)
+
+        XCTAssertEqual(states(tag: UNUserNotificationCenter.workName("reminder"), workManager), ["CANCELLED"])
+        XCTAssertLessThanOrEqual(savedDate("reminder"), Int64(System.currentTimeMillis()))
+        let posted = try XCTUnwrap(activeNotification(id: 42))
+        XCTAssertEqual(posted.extras.getString(android.app.Notification.EXTRA_TITLE), "Now")
+        XCTAssertTrue(posted.extras.getBoolean(android.app.Notification.EXTRA_SHOW_WHEN))
+        #endif
+    }
+
+    func testImageAttachmentsAreTheLargeIconAndExpandedPicture() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        _ = workManager()
+        let thumbnail = imageFile("thumbnail.png")
+        let picture = imageFile("picture.png")
+
+        NotificationWorker.post(Data.Builder().putInt("id", 43).putString(NotificationWorker.largeIconKey, thumbnail.absoluteString).putString(NotificationWorker.bigPictureKey, picture.absoluteString).build(), context: context)
+        let posted = try XCTUnwrap(activeNotification(id: 43))
+        XCTAssertNotNil(posted.getLargeIcon())
+        XCTAssertTrue(posted.extras.containsKey(android.app.Notification.EXTRA_PICTURE))
+
+        NotificationWorker.post(Data.Builder().putInt("id", 44).build(), context: context)
+        let plain = try XCTUnwrap(activeNotification(id: 44))
+        XCTAssertNil(plain.getLargeIcon())
+        XCTAssertFalse(plain.extras.containsKey(android.app.Notification.EXTRA_PICTURE))
+        #endif
+    }
+
+    #if SKIP
+    private func activeNotification(id: Int) -> android.app.Notification? {
+        let manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! android.app.NotificationManager
+        return manager.activeNotifications.firstOrNull { $0.id == id }?.notification
+    }
+
+    private func imageFile(_ name: String) -> URL {
+        let file = java.io.File(context.cacheDir, name)
+        let bitmap = android.graphics.Bitmap.createBitmap(8, 8, android.graphics.Bitmap.Config.ARGB_8888)
+        let stream = java.io.FileOutputStream(file)
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+        stream.close()
+        return URL(fileURLWithPath: file.absolutePath)
+    }
+    #endif
 }
 
 #if SKIP

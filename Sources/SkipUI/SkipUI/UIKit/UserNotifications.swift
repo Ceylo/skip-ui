@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -48,14 +49,13 @@ public final class UNUserNotificationCenter {
     // SKIP @bridge
     public func notificationSettings() async -> UNNotificationSettings {
         #if SKIP
-        guard Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU else {
-            return UNNotificationSettings(authorizationStatus: .authorized)
-        }
+        // The application context, not the activity: a background worker asks too, and has none.
+        let context = ProcessInfo.processInfo.androidContext
         let status: UNAuthorizationStatus
-        if let activity = UIApplication.shared.androidActivity,
-           ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED {
+        if NotificationManagerCompat.from(context).areNotificationsEnabled() {
             status = .authorized
-        } else if UserDefaults.standard.bool(forKey: "UNNotificationPermissionDenied") {
+        } else if Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || UserDefaults.standard.bool(forKey: "UNNotificationPermissionDenied") {
+            // Before API 33 there is no permission to ask for: notifications were turned off in Settings.
             status = .denied
         } else {
             status = .notDetermined
@@ -114,8 +114,8 @@ public final class UNUserNotificationCenter {
         // notification fires while the app is in the foreground. Gating enqueue on it
         // drops every request from an app that never set a delegate, and drops
         // background notifications whose presentation options are empty.
-        guard let activity = UIApplication.shared.androidActivity else { return }
-        
+        let context = ProcessInfo.processInfo.androidContext
+
         // Build the data which should be displayed in the notification.
         let dataBuilder = Data.Builder()
             .putString("title", request.content.title)
@@ -123,10 +123,16 @@ public final class UNUserNotificationCenter {
             .putInt("id", request.identifier.hashValue)
             .putString(NotificationWorker.identifierKey, request.identifier)
         
-        if let imageAttachment = request.content.attachments.first(where: { $0.type == "public.image" }) {
-            dataBuilder.putString("image_url", imageAttachment.url.absoluteString)
+        // As on iOS, a visible image is the thumbnail beside the text, and a hidden one only shows expanded.
+        // A lone visible image is the expanded picture too.
+        let images = request.content.attachments.filter { $0.type == "public.image" }
+        if let thumbnail = images.first(where: { !$0.hidesThumbnail }) {
+            dataBuilder.putString(NotificationWorker.largeIconKey, thumbnail.url.absoluteString)
         }
-        
+        if let picture = images.first(where: { $0.hidesThumbnail }) ?? images.first {
+            dataBuilder.putString(NotificationWorker.bigPictureKey, picture.url.absoluteString)
+        }
+
         for (key, value) in request.content.userInfo {
             if let s = value as? String {
                 dataBuilder.putString(key.toString(), s)
@@ -144,10 +150,16 @@ public final class UNUserNotificationCenter {
         // Get the next trigger date (if any).
         let nextDate = (request.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate() ??
                        (request.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate()
-        UNUserNotificationCenter.enqueueRequest(identifier: request.identifier, data: dataBuilder.build(), date: nextDate, context: activity)
+        if nextDate == nil || nextDate!.currentTimeMillis - System.currentTimeMillis() <= UNUserNotificationCenter.immediateDelayMillis {
+            // Posted before returning, as WorkManager can run jobs out of order: serial adds stay in order in the shade,
+            // and the attachments are read while their files still exist.
+            UNUserNotificationCenter.postRequest(identifier: request.identifier, data: dataBuilder.build(), context: context)
+        } else {
+            UNUserNotificationCenter.enqueueRequest(identifier: request.identifier, data: dataBuilder.build(), date: nextDate, context: context)
+        }
 
         // SKIP NOWARN
-        await UNUserNotificationCenter.cancelWorkOfEarlierVersions(identifiers: [request.identifier], workManager: WorkManager.getInstance(activity))
+        await UNUserNotificationCenter.cancelWorkOfEarlierVersions(identifiers: [request.identifier], workManager: WorkManager.getInstance(context))
         #endif
     }
 
@@ -155,10 +167,8 @@ public final class UNUserNotificationCenter {
     public func pendingNotificationRequests() async -> [Any /* UNNotificationRequest */] {
         #if SKIP
         // The queued work is what will fire. A saved date can say otherwise: WorkManager can run a request after its date.
-        guard let activity = UIApplication.shared.androidActivity else { return [] }
-
         // SKIP NOWARN
-        return await UNUserNotificationCenter.queuedNotificationIdentifiers(WorkManager.getInstance(activity)).map {
+        return await UNUserNotificationCenter.queuedNotificationIdentifiers(WorkManager.getInstance(ProcessInfo.processInfo.androidContext)).map {
             UNNotificationRequest(identifier: $0, content: UNMutableNotificationContent(), trigger: nil)
         }
         #else
@@ -169,8 +179,7 @@ public final class UNUserNotificationCenter {
     // SKIP @bridge
     public func removePendingNotificationRequests(withIdentifiers identifiers: [String]) {
         #if SKIP
-        guard let activity = UIApplication.shared.androidActivity else { return }
-        UNUserNotificationCenter.removePendingRequests(identifiers: identifiers, context: activity)
+        UNUserNotificationCenter.removePendingRequests(identifiers: identifiers, context: ProcessInfo.processInfo.androidContext)
         #else
         fatalError()
         #endif
@@ -179,10 +188,10 @@ public final class UNUserNotificationCenter {
     // SKIP @bridge
     public func removeAllPendingNotificationRequests() {
         #if SKIP
-        guard let activity = UIApplication.shared.androidActivity else { return }
+        let context = ProcessInfo.processInfo.androidContext
         // Every notification's work carries this tag, whichever SkipUI version enqueued it, and nothing else does.
-        WorkManager.getInstance(activity).cancelAllWorkByTag(UNUserNotificationCenter.notificationWorkTag)
-        UNUserNotificationCenter.forgetRequests(identifiers: getAllNotificationRequests().map { $0.id }, context: activity)
+        WorkManager.getInstance(context).cancelAllWorkByTag(UNUserNotificationCenter.notificationWorkTag)
+        UNUserNotificationCenter.forgetRequests(identifiers: getAllNotificationRequests().map { $0.id }, context: context)
         #else
         fatalError()
         #endif
@@ -200,15 +209,15 @@ public final class UNUserNotificationCenter {
     // SKIP @bridge
     public func removeDeliveredNotifications(withIdentifiers identifiers: [String]) {
         #if SKIP
-        guard let activity = UIApplication.shared.androidActivity else { return }
-        
+        let context = ProcessInfo.processInfo.androidContext
+
         // Get all notification identifiers from the shared preferences.
-        let preferences = activity.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE)
+        let preferences = context.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE)
         let editor = preferences.edit()
         let ids = HashSet<String>(preferences.getStringSet("ids", HashSet<String>()) ?? HashSet<String>())
         
         // Get the notification manager.
-        let notificationManager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
+        let notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
         
         // Cancel all delivered notifications using the notification manager.
         let now = System.currentTimeMillis()
@@ -274,6 +283,16 @@ public final class UNUserNotificationCenter {
         // Unique work replaces the work enqueued under its name.
         WorkManager.getInstance(context).enqueueUniqueWork(workName(identifier), ExistingWorkPolicy.REPLACE, workRequest)
         saveRequest(identifier: identifier, date: date, context: context)
+    }
+
+    /// A trigger at most this far away posts at once, without a WorkManager job.
+    static let immediateDelayMillis: Long = 1000
+
+    /// Posts the notification for `identifier` now, replacing the identifier's pending request.
+    static func postRequest(identifier: String, data: Data, context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(workName(identifier))
+        saveRequest(identifier: identifier, date: nil, context: context)
+        NotificationWorker.post(data, context: context)
     }
 
     /// Cancels the work of the requests with `identifiers`, whatever their saved dates: work can still be
@@ -369,8 +388,7 @@ public final class UNUserNotificationCenter {
     }
 
     private func getAllNotificationRequests() -> [(id: String, timestamp: Long)] {
-        guard let activity = UIApplication.shared.androidActivity else { return [] }
-        let preferences = activity.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE)
+        let preferences = ProcessInfo.processInfo.androidContext.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE)
         let ids = preferences.getStringSet("ids", nil) ?? java.util.HashSet<String>()
         
         var all: [(id: String, timestamp: Long)] = []
@@ -794,17 +812,48 @@ public class UNNotificationAttachment {
     public let type: String
     // SKIP @bridge
     public let timeShift: TimeInterval
+    /// `UNNotificationAttachmentOptionsThumbnailHiddenKey`: the image shows only in the expanded notification.
+    // SKIP @bridge
+    public let hidesThumbnail: Bool
 
     // SKIP @bridge
-    public init(identifier: String, url: URL, type: String = "public.data", timeShift: TimeInterval = 0) {
+    public init(identifier: String, url: URL, type: String = "public.data", timeShift: TimeInterval = 0, hidesThumbnail: Bool = false) {
         self.identifier = identifier
         self.url = url
         self.type = type
         self.timeShift = timeShift
+        self.hidesThumbnail = hidesThumbnail
+    }
+
+    public convenience init(identifier: String, url: URL, options: [AnyHashable: Any]? = nil) throws {
+        self.init(identifier: identifier, url: url, type: UNNotificationAttachment.type(of: url, hint: UNNotificationAttachment.typeHint(options)), hidesThumbnail: UNNotificationAttachment.hidesThumbnail(options))
+    }
+
+    // Kotlin's delegating constructor call can't read the option key globals itself.
+    private static func typeHint(_ options: [AnyHashable: Any]?) -> String? {
+        return options?[UNNotificationAttachmentOptionsTypeHintKey] as? String
+    }
+
+    private static func hidesThumbnail(_ options: [AnyHashable: Any]?) -> Bool {
+        return options?[UNNotificationAttachmentOptionsThumbnailHiddenKey] as? Bool ?? false
     }
 
     public static func attachment(withIdentifier identifier: String, url: URL, options: [AnyHashable: Any]? = nil) throws -> UNNotificationAttachment {
-        return UNNotificationAttachment(identifier: identifier, url: url, type: "public.data")
+        return try UNNotificationAttachment(identifier: identifier, url: url, options: options)
+    }
+
+    /// The type iOS infers from the file extension, unless the options give one.
+    // SKIP @bridge
+    public static func type(of url: URL, hint: String?) -> String {
+        if let hint {
+            return hint
+        }
+        switch url.pathExtension.lowercased() {
+        case "jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp":
+            return "public.image"
+        default:
+            return "public.data"
+        }
     }
 }
 
@@ -933,9 +982,9 @@ public class UNNotificationSettings : NSObject {
         super.init()
     }
 
-    @available(*, unavailable)
+    /// Android has no app-wide sound setting: each channel's importance decides whether it makes a sound.
     public var soundSetting: UNNotificationSetting {
-        fatalError()
+        return .enabled
     }
 
     @available(*, unavailable)
@@ -1020,26 +1069,35 @@ public class NotificationWorker : Worker {
     static let dateKey = "skip.ui.UNNotification.date"
     /// The extra that carries the token proving the intent came from the notification.
     static let tokenKey = "skip.ui.UNNotificationResponse.token"
+    /// The URL of the image drawn beside the text: a visible image attachment.
+    static let largeIconKey = "image_url"
+    /// The URL of the image drawn in the expanded notification.
+    static let bigPictureKey = "big_picture_url"
 
     public init(context: Context, params: WorkerParameters) {
         super.init(context, params)
     }
     
     public override func doWork() -> ListenableWorker.Result {
+        NotificationWorker.post(getInputData(), context: getApplicationContext())
+        return ListenableWorker.Result.success()
+    }
+
+    /// Posts the notification `inputData` describes.
+    static func post(_ inputData: Data, context: Context) {
         // Get the data which should be displayed in the notification.
-        let inputData = getInputData()
         let id = inputData.getInt("id", 0)
         let title = inputData.getString("title") ?? ""
         let body = inputData.getString("body") ?? ""
-        let imageAttachmentUrl = inputData.getString("image_url")
-        
-        let context = getApplicationContext()
+        let postedMillis = System.currentTimeMillis()
+
         let intent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName())
-        intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        // SINGLE_TOP hands a running activity the tap as a new intent, where CLEAR_TOP alone would recreate it.
+        intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
         
         let bundle = android.os.Bundle()
         let allData = inputData.keyValueMap
-        for (key, value) in allData where key != "title" && key != "body" && key != "id" && key != "image_url" {
+        for (key, value) in allData where key != "title" && key != "body" && key != "id" && key != largeIconKey && key != bigPictureKey {
             if let s = value as? String {
                 bundle.putString(key, s)
             } else if let b = value as? Bool {
@@ -1052,7 +1110,7 @@ public class NotificationWorker : Worker {
                 bundle.putString(key, value.toString())
             }
         }
-        bundle.putLong(NotificationWorker.dateKey, System.currentTimeMillis())
+        bundle.putLong(NotificationWorker.dateKey, postedMillis)
         if let identifier = inputData.getString(NotificationWorker.identifierKey) {
             bundle.putString(NotificationWorker.tokenKey, UNUserNotificationCenter.issueResponseToken(identifier: identifier, context: context))
         }
@@ -1073,35 +1131,63 @@ public class NotificationWorker : Worker {
             .setContentText(body)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
-        
-        // Update the notification icon.
-        if let url = imageAttachmentUrl {
-            builder.setSmallIcon(IconCompat.createWithContentUri(url))
+            .setWhen(postedMillis)
+            .setShowWhen(true)
+
+        // The small icon is a status bar glyph, drawn from its alpha alone, so an attachment is the large icon instead.
+        let largeIcon = bitmap(at: inputData.getString(largeIconKey), context: context)
+        if let largeIcon {
+            builder.setLargeIcon(largeIcon)
+        }
+        if let picture = bitmap(at: inputData.getString(bigPictureKey), context: context) {
+            let style = NotificationCompat.BigPictureStyle().bigPicture(picture)
+            if largeIcon != nil {
+                // Expanded, the picture replaces the thumbnail, as on iOS.
+                style.bigLargeIcon(nil as android.graphics.Bitmap?)
+            }
+            builder.setStyle(style)
+        }
+
+        // Notification icon: must be a resource with transparent background and white logo
+        // eg: to be used as a default icon must be added in the AndroidManifest.xml with the following code:
+        // <meta-data
+        // android:name="com.google.firebase.messaging.default_notification_icon"
+        // android:resource="@drawable/ic_notification" />
+        var resId = context.getResources().getIdentifier("ic_notification", "drawable", context.getPackageName())
+        if resId == 0 {
+            resId = context.getResources().getIdentifier("ic_launcher", "mipmap", context.getPackageName())
+        }
+        // createWithResource throws when the id is 0, which fails the worker and
+        // the notification is never posted. A platform status icon always exists.
+        // createWithResource records the package of the Context it is given, so a
+        // framework id is not found in the app package. Load it from the android package.
+        if resId == 0 {
+            let androidContext = context.createPackageContext("android", 0)
+            builder.setSmallIcon(IconCompat.createWithResource(androidContext, android.R.drawable.stat_notify_chat))
         } else {
-            // Notification icon: must be a resource with transparent background and white logo
-            // eg: to be used as a default icon must be added in the AndroidManifest.xml with the following code:
-            // <meta-data
-            // android:name="com.google.firebase.messaging.default_notification_icon"
-            // android:resource="@drawable/ic_notification" />
-            var resId = context.getResources().getIdentifier("ic_notification", "drawable", context.getPackageName())
-            if resId == 0 {
-                resId = context.getResources().getIdentifier("ic_launcher", "mipmap", context.getPackageName())
-            }
-            // createWithResource throws when the id is 0, which fails the worker and
-            // the notification is never posted. A platform status icon always exists.
-            // createWithResource records the package of the Context it is given, so a
-            // framework id is not found in the app package. Load it from the android package.
-            if resId == 0 {
-                let androidContext = context.createPackageContext("android", 0)
-                builder.setSmallIcon(IconCompat.createWithResource(androidContext, android.R.drawable.stat_notify_chat))
-            } else {
-                builder.setSmallIcon(IconCompat.createWithResource(context, resId))
-            }
+            builder.setSmallIcon(IconCompat.createWithResource(context, resId))
         }
         
         // Display the notification.
         notificationManager.notify(id, builder.build())
-        return ListenableWorker.Result.success()
+    }
+
+    /// Decodes the image at `urlString`, a file or content URL; nil when there is none or it can't be read.
+    private static func bitmap(at urlString: String?, context: Context) -> android.graphics.Bitmap? {
+        guard let urlString else {
+            return nil
+        }
+        do {
+            let uri = android.net.Uri.parse(urlString)
+            guard let stream = context.getContentResolver().openInputStream(uri) else {
+                return nil
+            }
+            defer { stream.close() }
+            return android.graphics.BitmapFactory.decodeStream(stream)
+        } catch {
+            logger.warning("ignoring an unreadable notification attachment: \(error)")
+            return nil
+        }
     }
 }
 #endif
