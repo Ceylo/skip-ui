@@ -237,6 +237,44 @@ final class NotificationRequestTests: SkipUITestCase {
         XCTAssertEqual(response.notification.request.content.body, "By Kiyari")
         XCTAssertEqual(response.notification.request.content.categoryIdentifier, "mature")
         XCTAssertEqual(response.notification.request.content.userInfo["link"] as? String, "https://example.com/view/1/")
+        XCTAssertEqual(response.notification.request.content.userInfo.count, 1)
+        #endif
+    }
+
+    func testCustomDismissActionReportsTheDismissal() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        _ = workManager()
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: "reminder", actions: [], intentIdentifiers: [], options: [.customDismissAction]),
+            UNNotificationCategory(identifier: "plain", actions: [], intentIdentifiers: []),
+        ])
+        NotificationWorker.post(Data.Builder().putInt("id", 50).putString(NotificationWorker.categoryKey, "reminder").build(), context: context)
+        NotificationWorker.post(Data.Builder().putInt("id", 51).putString(NotificationWorker.categoryKey, "plain").build(), context: context)
+        XCTAssertNotNil(try XCTUnwrap(activeNotification(id: 50)).deleteIntent)
+        XCTAssertNil(try XCTUnwrap(activeNotification(id: 51)).deleteIntent)
+        #endif
+    }
+
+    func testTapResponseCarriesTheRequestsContent() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        let thumbnail = imageFile("tap-thumbnail.png")
+        let data = Data.Builder()
+            .putString(NotificationWorker.identifierKey, "submission.2")
+            .putString("title", "Moonlit Fox")
+            .putString(NotificationWorker.largeIconKey, thumbnail.absoluteString)
+            .putString(NotificationWorker.largeIconIdentifierKey, "blurred")
+            .putString("link", "https://example.com/view/2/")
+            .build()
+        let response = NotificationWorker.response(to: data, actionIdentifier: UNNotificationDefaultActionIdentifier, postedMillis: Int64(1_700_000_000_000))
+        XCTAssertEqual(response.notification.request.content.title, "Moonlit Fox")
+        XCTAssertEqual(response.notification.request.content.attachments.map(\.identifier), ["blurred"])
+        XCTAssertEqual(response.notification.request.content.attachments[0].url, thumbnail)
+        XCTAssertEqual(response.notification.request.content.userInfo.count, 1)
+        XCTAssertEqual(response.notification.date, Date(timeIntervalSince1970: 1_700_000_000))
         #endif
     }
 
@@ -244,7 +282,7 @@ final class NotificationRequestTests: SkipUITestCase {
         #if !SKIP
         throw XCTSkip("Notification requests are WorkManager work on Android")
         #else
-        UNUserNotificationCenter.current().setNotificationCategories([UNNotificationCategory(identifier: "mature", actions: [UNNotificationAction(identifier: "show", title: "Show", options: [.authenticationRequired])], intentIdentifiers: [], options: [.hiddenPreviewsShowTitle])])
+        UNUserNotificationCenter.current().setNotificationCategories([UNNotificationCategory(identifier: "mature", actions: [UNNotificationAction(identifier: "show", title: "Show", options: [.authenticationRequired])], intentIdentifiers: ["INSendMessageIntent"], options: [.hiddenPreviewsShowTitle])])
         let categories = await UNUserNotificationCenter.current().getNotificationCategories()
         let category = try XCTUnwrap(categories.first)
         XCTAssertEqual(categories.count, 1)
@@ -252,6 +290,8 @@ final class NotificationRequestTests: SkipUITestCase {
         XCTAssertEqual(category.options.rawValue, UNNotificationCategoryOptions.hiddenPreviewsShowTitle.rawValue)
         XCTAssertEqual(category.actions.map(\.identifier), ["show"])
         XCTAssertEqual(category.actions[0].options.rawValue, UNNotificationActionOptions.authenticationRequired.rawValue)
+        XCTAssertEqual(category.intentIdentifiers.count, 1)
+        XCTAssertEqual(category.intentIdentifiers.first, "INSendMessageIntent")
         #endif
     }
 

@@ -144,12 +144,14 @@ public final class UNUserNotificationCenter {
             storedAttachments = UNUserNotificationCenter.newAttachmentStore(id: request.identifier.hashValue, context: context)
         }
         let thumbnailURL = thumbnail.map { UNUserNotificationCenter.store($0.url, as: "large_icon", in: storedAttachments) }
-        if let thumbnailURL {
+        if let thumbnail, let thumbnailURL {
             dataBuilder.putString(NotificationWorker.largeIconKey, thumbnailURL.absoluteString)
+            dataBuilder.putString(NotificationWorker.largeIconIdentifierKey, thumbnail.identifier)
         }
         if let picture {
             let pictureURL = picture.url == thumbnail?.url ? thumbnailURL! : UNUserNotificationCenter.store(picture.url, as: "big_picture", in: storedAttachments)
             dataBuilder.putString(NotificationWorker.bigPictureKey, pictureURL.absoluteString)
+            dataBuilder.putString(NotificationWorker.bigPictureIdentifierKey, picture.identifier)
         }
 
         for (key, value) in request.content.userInfo {
@@ -228,7 +230,7 @@ public final class UNUserNotificationCenter {
         let context = ProcessInfo.processInfo.androidContext
 
         // Get all notification identifiers from the shared preferences.
-        let preferences = context.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE)
+        let preferences = context.getSharedPreferences(UNUserNotificationCenter.preferencesName, Context.MODE_PRIVATE)
         let editor = preferences.edit()
         let ids = HashSet<String>(preferences.getStringSet("ids", HashSet<String>()) ?? HashSet<String>())
         
@@ -380,6 +382,7 @@ public final class UNUserNotificationCenter {
         }
     }
 
+    static let preferencesName = "__skip_usernotifications"
     private static let categoriesKey = "categories"
 
     static func saveCategories(_ categories: [UNNotificationCategory], context: Context) {
@@ -389,15 +392,22 @@ public final class UNUserNotificationCenter {
             for action in category.actions {
                 actions.put(org.json.JSONObject().put("identifier", action.identifier).put("title", action.title).put("options", action.options.rawValue))
             }
-            json.put(org.json.JSONObject().put("identifier", category.identifier).put("actions", actions).put("options", category.options.rawValue))
+            let intentIdentifiers = org.json.JSONArray()
+            for intentIdentifier in category.intentIdentifiers {
+                intentIdentifiers.put(intentIdentifier)
+            }
+            json.put(org.json.JSONObject().put("identifier", category.identifier).put("actions", actions).put("intentIdentifiers", intentIdentifiers).put("options", category.options.rawValue))
         }
-        context.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE).edit()
-            .putString(categoriesKey, json.toString())
-            .commit()
+        // An app sets them at every launch, usually unchanged.
+        let preferences = context.getSharedPreferences(UNUserNotificationCenter.preferencesName, Context.MODE_PRIVATE)
+        let saved = json.toString()
+        if preferences.getString(categoriesKey, nil) != saved {
+            preferences.edit().putString(categoriesKey, saved).apply()
+        }
     }
 
     static func loadCategories(context: Context) -> [UNNotificationCategory] {
-        guard let saved = context.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE).getString(categoriesKey, nil) else {
+        guard let saved = context.getSharedPreferences(UNUserNotificationCenter.preferencesName, Context.MODE_PRIVATE).getString(categoriesKey, nil) else {
             return []
         }
         var categories: [UNNotificationCategory] = []
@@ -411,7 +421,12 @@ public final class UNUserNotificationCenter {
                     let action = actionsJSON.getJSONObject(j)
                     actions.append(UNNotificationAction(identifier: action.getString("identifier"), title: action.getString("title"), options: UNNotificationActionOptions(rawValue: action.getInt("options"))))
                 }
-                categories.append(UNNotificationCategory(identifier: category.getString("identifier"), actions: actions, intentIdentifiers: [], options: UNNotificationCategoryOptions(rawValue: category.getInt("options"))))
+                let intentsJSON = category.optJSONArray("intentIdentifiers")
+                var intentIdentifiers: [String] = []
+                for j in 0..<(intentsJSON?.length() ?? 0) {
+                    intentIdentifiers.append(intentsJSON!.getString(j))
+                }
+                categories.append(UNNotificationCategory(identifier: category.getString("identifier"), actions: actions, intentIdentifiers: intentIdentifiers, options: UNNotificationCategoryOptions(rawValue: category.getInt("options"))))
             }
         } catch {
             logger.warning("ignoring unreadable notification categories: \(error)")
@@ -505,7 +520,7 @@ public final class UNUserNotificationCenter {
 
     /// Saves the identifier and its date, so the request can be found and removed later.
     private static func saveRequest(identifier: String, date: Date?, context: Context) {
-        let preferences = context.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE)
+        let preferences = context.getSharedPreferences(UNUserNotificationCenter.preferencesName, Context.MODE_PRIVATE)
         let ids = HashSet<String>(preferences.getStringSet("ids", HashSet<String>()) ?? HashSet<String>())
         ids.add(identifier)
         preferences.edit()
@@ -517,7 +532,7 @@ public final class UNUserNotificationCenter {
     /// Drops the requests with `identifiers` that have not reached their date from the saved list, which also
     /// lists delivered notifications.
     static func forgetRequests(identifiers: [String], context: Context) {
-        let preferences = context.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE)
+        let preferences = context.getSharedPreferences(UNUserNotificationCenter.preferencesName, Context.MODE_PRIVATE)
         let editor = preferences.edit()
         let ids = HashSet<String>(preferences.getStringSet("ids", HashSet<String>()) ?? HashSet<String>())
         let now = System.currentTimeMillis()
@@ -532,7 +547,7 @@ public final class UNUserNotificationCenter {
     }
 
     private func getAllNotificationRequests() -> [(id: String, timestamp: Long)] {
-        let preferences = ProcessInfo.processInfo.androidContext.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE)
+        let preferences = ProcessInfo.processInfo.androidContext.getSharedPreferences(UNUserNotificationCenter.preferencesName, Context.MODE_PRIVATE)
         let ids = preferences.getStringSet("ids", nil) ?? java.util.HashSet<String>()
         
         var all: [(id: String, timestamp: Long)] = []
@@ -603,7 +618,7 @@ public final class UNUserNotificationCenter {
     /// the token of any notification posted earlier with that identifier.
     static func issueResponseToken(identifier: String, context: Context) -> String {
         let token = java.util.UUID.randomUUID().toString()
-        context.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE).edit()
+        context.getSharedPreferences(UNUserNotificationCenter.preferencesName, Context.MODE_PRIVATE).edit()
             .putString(responseTokenKey(identifier), token)
             .commit()
         return token
@@ -626,14 +641,20 @@ public final class UNUserNotificationCenter {
             guard let extras = intent.extras, let identifier = extras.getString(NotificationWorker.identifierKey), let token = extras.getString(NotificationWorker.tokenKey) else {
                 return nil
             }
-            let preferences = context.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE)
+            let preferences = context.getSharedPreferences(UNUserNotificationCenter.preferencesName, Context.MODE_PRIVATE)
             guard token == preferences.getString(responseTokenKey(identifier), nil) else {
                 return nil
             }
             preferences.edit().remove(responseTokenKey(identifier)).commit()
 
+            let actionIdentifier = extras.getString(NotificationWorker.actionIdentifierKey) ?? UNNotificationDefaultActionIdentifier
+            let postedMillis = extras.getLong(NotificationWorker.dateKey, 0)
+            if let bytes = extras.getByteArray(NotificationWorker.dataKey) {
+                return NotificationWorker.response(to: Data.fromByteArray(bytes), actionIdentifier: actionIdentifier, postedMillis: postedMillis)
+            }
+            // An intent posted without the notification's data carries its userInfo only.
             var userInfo: [AnyHashable: Any] = [:]
-            for key in extras.keySet() where key != NotificationWorker.identifierKey && key != NotificationWorker.tokenKey && key != NotificationWorker.dateKey && key != NotificationWorker.actionIdentifierKey {
+            for key in extras.keySet() where key != NotificationWorker.identifierKey && key != NotificationWorker.tokenKey && key != NotificationWorker.dateKey && key != NotificationWorker.actionIdentifierKey && key != NotificationWorker.dataKey {
                 // NotificationWorker writes these types only.
                 if let value = extras.get(key), value is String || value is Bool || value is Int || value is Double {
                     userInfo[key] = value
@@ -642,8 +663,7 @@ public final class UNUserNotificationCenter {
             let content = UNMutableNotificationContent()
             content.userInfo = userInfo
             let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-            let date = Date(timeIntervalSince1970: Double(extras.getLong(NotificationWorker.dateKey, 0)) / 1000.0)
-            let actionIdentifier = extras.getString(NotificationWorker.actionIdentifierKey) ?? UNNotificationDefaultActionIdentifier
+            let date = Date(timeIntervalSince1970: Double(postedMillis) / 1000.0)
             return UNNotificationResponse(actionIdentifier: actionIdentifier, notification: UNNotification(request: request, date: date))
         } catch {
             logger.warning("ignoring an unreadable intent: \(error)")
@@ -818,6 +838,7 @@ public final class UNNotificationCategory : Hashable {
     public let identifier: String
     // SKIP @bridge
     public let actions: [UNNotificationAction]
+    // SKIP @bridge
     public let intentIdentifiers: [String]
     public let options: UNNotificationCategoryOptions
 
@@ -1327,10 +1348,17 @@ public class NotificationWorker : Worker {
     static let categoryKey = "skip.ui.UNNotificationContent.categoryIdentifier"
     /// The request's `interruptionLevel` raw value.
     static let interruptionLevelKey = "skip.ui.UNNotificationContent.interruptionLevel"
+    /// The identifiers of the attachments behind the large icon and the expanded picture.
+    static let largeIconIdentifierKey = "skip.ui.UNNotificationAttachment.largeIcon"
+    static let bigPictureIdentifierKey = "skip.ui.UNNotificationAttachment.bigPicture"
     /// The extra that carries the identifier of the action a button stands for.
     static let actionIdentifierKey = "skip.ui.UNNotificationResponse.actionIdentifier"
-    /// The keys that describe the notification itself, which its tap's intent does not carry.
-    static let notificationKeys: Set<String> = ["title", "body", "id", largeIconKey, bigPictureKey, categoryKey, interruptionLevelKey]
+    /// The extra that carries whether that action requires an unlock.
+    static let authenticationRequiredKey = "skip.ui.UNNotificationAction.authenticationRequired"
+    /// The extra that carries the notification's serialized `Data`, from which its response is built.
+    static let dataKey = "skip.ui.UNNotification.data"
+    /// The keys that describe the notification itself rather than its userInfo.
+    static let notificationKeys: Set<String> = ["title", "body", "id", identifierKey, largeIconKey, bigPictureKey, largeIconIdentifierKey, bigPictureIdentifierKey, categoryKey, interruptionLevelKey]
 
     public init(context: Context, params: WorkerParameters) {
         super.init(context, params)
@@ -1369,7 +1397,9 @@ public class NotificationWorker : Worker {
             }
         }
         bundle.putLong(NotificationWorker.dateKey, postedMillis)
+        bundle.putByteArray(dataKey, inputData.toByteArray())
         if let identifier = inputData.getString(NotificationWorker.identifierKey) {
+            bundle.putString(NotificationWorker.identifierKey, identifier)
             bundle.putString(NotificationWorker.tokenKey, UNUserNotificationCenter.issueResponseToken(identifier: identifier, context: context))
         }
         intent?.putExtras(bundle)
@@ -1399,7 +1429,8 @@ public class NotificationWorker : Worker {
         if let largeIcon {
             builder.setLargeIcon(largeIcon)
         }
-        let picture = bitmap(at: inputData.getString(bigPictureKey), context: context)
+        let pictureURL = inputData.getString(bigPictureKey)
+        let picture = pictureURL == inputData.getString(largeIconKey) ? largeIcon : bitmap(at: pictureURL, context: context)
         if inputData.getInt(interruptionLevelKey, UNNotificationInterruptionLevel.active.rawValue) == UNNotificationInterruptionLevel.passive.rawValue {
             builder.setSilent(true)
         }
@@ -1407,6 +1438,10 @@ public class NotificationWorker : Worker {
            let category = UNUserNotificationCenter.loadCategories(context: context).first(where: { $0.identifier == categoryIdentifier }) {
             for action in category.actions {
                 addAction(action, to: builder, id: id, inputData: inputData, launchIntent: intent, postedMillis: postedMillis, context: context)
+            }
+            if category.options.contains(.customDismissAction) {
+                let dismissal = receiverIntent(actionIdentifier: UNNotificationDismissActionIdentifier, authenticationRequired: false, inputData: inputData, postedMillis: postedMillis, context: context)
+                builder.setDeleteIntent(PendingIntent.getBroadcast(context, id, dismissal, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             }
         }
         if let picture {
@@ -1456,11 +1491,7 @@ public class NotificationWorker : Worker {
                 .putExtra(actionIdentifierKey, action.identifier)
             pendingIntent = PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)
         } else {
-            let intent = Intent(context, NotificationActionReceiver.self.java)
-                .setAction(actionIntentPrefix + action.identifier)
-                .putExtra(NotificationActionReceiver.dataKey, inputData.toByteArray())
-                .putExtra(actionIdentifierKey, action.identifier)
-                .putExtra(dateKey, postedMillis)
+            let intent = receiverIntent(actionIdentifier: action.identifier, authenticationRequired: action.options.contains(.authenticationRequired), inputData: inputData, postedMillis: postedMillis, context: context)
             pendingIntent = PendingIntent.getBroadcast(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)
         }
         let button = NotificationCompat.Action.Builder(nil as IconCompat?, action.title, pendingIntent)
@@ -1471,14 +1502,34 @@ public class NotificationWorker : Worker {
 
     private static let actionIntentPrefix = "skip.ui.UNNotificationAction."
 
-    /// The response to the button for the action `actionIdentifier` on the notification `inputData` describes.
-    static func actionResponse(_ inputData: Data, actionIdentifier: String, postedMillis: Long) -> UNNotificationResponse {
+    /// The intent reaching `NotificationActionReceiver` for `actionIdentifier`; the action makes it distinct from the
+    /// notification's other intents.
+    private static func receiverIntent(actionIdentifier: String, authenticationRequired: Bool, inputData: Data, postedMillis: Long, context: Context) -> Intent {
+        return Intent(context, NotificationActionReceiver.self.java)
+            .setAction(actionIntentPrefix + actionIdentifier)
+            .putExtra(dataKey, inputData.toByteArray())
+            .putExtra(actionIdentifierKey, actionIdentifier)
+            .putExtra(authenticationRequiredKey, authenticationRequired)
+            .putExtra(dateKey, postedMillis)
+    }
+
+    /// The response to `actionIdentifier` on the notification `inputData` describes, with the request's content.
+    static func response(to inputData: Data, actionIdentifier: String, postedMillis: Long) -> UNNotificationResponse {
         let content = UNMutableNotificationContent()
         content.title = inputData.getString("title") ?? ""
         content.body = inputData.getString("body") ?? ""
         content.categoryIdentifier = inputData.getString(categoryKey) ?? ""
+        content.bridgedInterruptionLevel = inputData.getInt(interruptionLevelKey, UNNotificationInterruptionLevel.active.rawValue)
+        var attachments: [UNNotificationAttachment] = []
+        if let urlString = inputData.getString(largeIconKey), let url = URL(string: urlString) {
+            attachments.append(UNNotificationAttachment(identifier: inputData.getString(largeIconIdentifierKey) ?? "", url: url, type: "public.image"))
+        }
+        if let urlString = inputData.getString(bigPictureKey), let url = URL(string: urlString) {
+            attachments.append(UNNotificationAttachment(identifier: inputData.getString(bigPictureIdentifierKey) ?? "", url: url, type: "public.image", hidesThumbnail: true))
+        }
+        content.attachments = attachments
         var userInfo: [AnyHashable: Any] = [:]
-        for (key, value) in inputData.keyValueMap where !notificationKeys.contains(key) && key != identifierKey {
+        for (key, value) in inputData.keyValueMap where !notificationKeys.contains(key) {
             if let value {
                 userInfo[key] = value
             }
@@ -1510,35 +1561,25 @@ public class NotificationWorker : Worker {
 
 /// Receives the presses on a notification's buttons that don't open the app, and hands their responses to the delegate.
 public class NotificationActionReceiver : BroadcastReceiver {
-    /// The extra carrying the notification's serialized `Data`.
-    static let dataKey = "skip.ui.UNNotification.data"
-
     public override init() {
         super.init()
     }
 
     public override func onReceive(context: Context, intent: Intent) {
-        guard let bytes = intent.getByteArrayExtra(NotificationActionReceiver.dataKey), let actionIdentifier = intent.getStringExtra(NotificationWorker.actionIdentifierKey) else {
+        guard let bytes = intent.getByteArrayExtra(NotificationWorker.dataKey), let actionIdentifier = intent.getStringExtra(NotificationWorker.actionIdentifierKey) else {
             return
         }
-        let data = Data.fromByteArray(bytes)
         // Before Android 12 a button can't ask for an unlock, so one that requires it does nothing on the lock screen.
         let keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as! android.app.KeyguardManager
-        if Build.VERSION.SDK_INT < Build.VERSION_CODES.S && keyguard.isKeyguardLocked() && requiresAuthentication(actionIdentifier, data: data, context: context) {
+        if intent.getBooleanExtra(NotificationWorker.authenticationRequiredKey, true) && Build.VERSION.SDK_INT < Build.VERSION_CODES.S && keyguard.isKeyguardLocked() {
             return
         }
-        let response = NotificationWorker.actionResponse(data, actionIdentifier: actionIdentifier, postedMillis: intent.getLongExtra(NotificationWorker.dateKey, System.currentTimeMillis()))
+        let response = NotificationWorker.response(to: Data.fromByteArray(bytes), actionIdentifier: actionIdentifier, postedMillis: intent.getLongExtra(NotificationWorker.dateKey, System.currentTimeMillis()))
         let result = goAsync()
         Task {
             await UNUserNotificationCenter.current().receiveActionResponse(response)
             result.finish()
         }
-    }
-
-    private func requiresAuthentication(_ actionIdentifier: String, data: Data, context: Context) -> Bool {
-        let categoryIdentifier = data.getString(NotificationWorker.categoryKey)
-        let category = UNUserNotificationCenter.loadCategories(context: context).first(where: { $0.identifier == categoryIdentifier })
-        return category?.actions.first(where: { $0.identifier == actionIdentifier })?.options.contains(.authenticationRequired) ?? true
     }
 }
 #endif
