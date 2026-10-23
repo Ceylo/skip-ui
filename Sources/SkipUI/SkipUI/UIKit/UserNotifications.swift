@@ -7,6 +7,7 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -126,11 +127,16 @@ public final class UNUserNotificationCenter {
         // A visible image is the thumbnail beside the text, and a hidden one shows only when expanded:
         // a small image such as an avatar must not be blown up into the expanded picture.
         let images = request.content.attachments.filter { $0.type == "public.image" }
+        let storedAttachments = UNUserNotificationCenter.attachmentStore(id: request.identifier.hashValue, context: context)
         if let thumbnail = images.first(where: { !$0.hidesThumbnail }) {
-            dataBuilder.putString(NotificationWorker.largeIconKey, thumbnail.url.absoluteString)
+            dataBuilder.putString(NotificationWorker.largeIconKey, UNUserNotificationCenter.store(thumbnail.url, as: "large_icon", in: storedAttachments).absoluteString)
         }
         if let picture = images.first(where: { $0.hidesThumbnail }) {
-            dataBuilder.putString(NotificationWorker.bigPictureKey, picture.url.absoluteString)
+            dataBuilder.putString(NotificationWorker.bigPictureKey, UNUserNotificationCenter.store(picture.url, as: "big_picture", in: storedAttachments).absoluteString)
+            if let revealTitle = picture.revealActionTitle {
+                dataBuilder.putString(NotificationWorker.revealActionTitleKey, revealTitle)
+                dataBuilder.putString(NotificationWorker.concealActionTitleKey, picture.concealActionTitle)
+            }
         }
 
         for (key, value) in request.content.userInfo {
@@ -160,6 +166,7 @@ public final class UNUserNotificationCenter {
 
         // SKIP NOWARN
         await UNUserNotificationCenter.cancelWorkOfEarlierVersions(identifiers: [request.identifier], workManager: WorkManager.getInstance(context))
+        pruneAttachmentStores(context: context)
         #endif
     }
 
@@ -283,6 +290,53 @@ public final class UNUserNotificationCenter {
         // Unique work replaces the work enqueued under its name.
         WorkManager.getInstance(context).enqueueUniqueWork(workName(identifier), ExistingWorkPolicy.REPLACE, workRequest)
         saveRequest(identifier: identifier, date: date, context: context)
+    }
+
+    /// The directory holding copies of the attachments of the notification with `id`, emptied first. iOS moves an
+    /// attachment's file into its own store when the request is added; the copy keeps the image for as long as the
+    /// notification can show it, as its owner may delete the original.
+    static func attachmentStore(id: Int, context: Context) -> java.io.File {
+        let directory = java.io.File(attachmentStoresDirectory(context), String(describing: id))
+        directory.deleteRecursively()
+        directory.mkdirs()
+        return directory
+    }
+
+    private static func attachmentStoresDirectory(_ context: Context) -> java.io.File {
+        return java.io.File(context.getNoBackupFilesDir(), "skip_usernotifications_attachments")
+    }
+
+    /// Copies the file at `url` into `directory` as `name`, returning the copy's URL, or `url` when it can't be copied.
+    static func store(_ url: URL, as name: String, in directory: java.io.File) -> URL {
+        do {
+            let copy = java.io.File(directory, name)
+            java.io.File(url.path).copyTo(copy, overwrite: true)
+            return URL(fileURLWithPath: copy.absolutePath)
+        } catch {
+            logger.warning("keeping the original of a notification attachment, which could not be copied: \(error)")
+            return url
+        }
+    }
+
+    /// Deletes the attachment copies of notifications that are neither showing nor waiting to be posted. A notification
+    /// joins the active ones some time after it's posted, so recent copies are kept too.
+    private func pruneAttachmentStores(context: Context) {
+        let notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
+        let recent = System.currentTimeMillis() - 10 * 60 * 1000
+        var kept = Set<String>()
+        for notification in notificationManager.getActiveNotifications() {
+            kept.insert(String(describing: notification.getId()))
+        }
+        for request in getPendingNotificationRequests() {
+            kept.insert(String(describing: (request as! UNNotificationRequest).identifier.hashValue))
+        }
+        let directories = UNUserNotificationCenter.attachmentStoresDirectory(context).listFiles()
+        for index in 0..<(directories?.size ?? 0) {
+            let directory = directories![index]
+            if !kept.contains(directory.getName()) && directory.lastModified() < recent {
+                directory.deleteRecursively()
+            }
+        }
     }
 
     /// A trigger at most this far away posts at once, without a WorkManager job.
@@ -801,6 +855,11 @@ public let UNNotificationAttachmentOptionsTypeHintKey = "UNNotificationAttachmen
 public let UNNotificationAttachmentOptionsThumbnailHiddenKey = "UNNotificationAttachmentOptionsThumbnailHiddenKey"
 public let UNNotificationAttachmentOptionsThumbnailClippingRectKey = "UNNotificationAttachmentOptionsThumbnailClippingRectKey"
 public let UNNotificationAttachmentOptionsThumbnailTimeKey = "UNNotificationAttachmentOptionsThumbnailTimeKey"
+/// Android only: the title of a button that reveals a hidden image. Android expands the top notification on its own,
+/// where iOS shows a hidden image only on a long-press, so without it the image shows unasked.
+public let UNNotificationAttachmentOptionsRevealActionTitleKey = "UNNotificationAttachmentOptionsRevealActionTitleKey"
+/// Android only: the title of the button that hides a revealed image again. Without it, the image stays revealed.
+public let UNNotificationAttachmentOptionsConcealActionTitleKey = "UNNotificationAttachmentOptionsConcealActionTitleKey"
 
 // SKIP @bridge
 public class UNNotificationAttachment {
@@ -815,18 +874,26 @@ public class UNNotificationAttachment {
     /// `UNNotificationAttachmentOptionsThumbnailHiddenKey`: the image shows only in the expanded notification.
     // SKIP @bridge
     public let hidesThumbnail: Bool
+    /// `UNNotificationAttachmentOptionsRevealActionTitleKey`
+    // SKIP @bridge
+    public let revealActionTitle: String?
+    /// `UNNotificationAttachmentOptionsConcealActionTitleKey`
+    // SKIP @bridge
+    public let concealActionTitle: String?
 
     // SKIP @bridge
-    public init(identifier: String, url: URL, type: String = "public.data", timeShift: TimeInterval = 0, hidesThumbnail: Bool = false) {
+    public init(identifier: String, url: URL, type: String = "public.data", timeShift: TimeInterval = 0, hidesThumbnail: Bool = false, revealActionTitle: String? = nil, concealActionTitle: String? = nil) {
         self.identifier = identifier
         self.url = url
         self.type = type
         self.timeShift = timeShift
         self.hidesThumbnail = hidesThumbnail
+        self.revealActionTitle = revealActionTitle
+        self.concealActionTitle = concealActionTitle
     }
 
     public convenience init(identifier: String, url: URL, options: [AnyHashable: Any]? = nil) throws {
-        self.init(identifier: identifier, url: url, type: UNNotificationAttachment.type(of: url, hint: UNNotificationAttachment.typeHint(options)), hidesThumbnail: UNNotificationAttachment.hidesThumbnail(options))
+        self.init(identifier: identifier, url: url, type: UNNotificationAttachment.type(of: url, hint: UNNotificationAttachment.typeHint(options)), hidesThumbnail: UNNotificationAttachment.hidesThumbnail(options), revealActionTitle: UNNotificationAttachment.revealActionTitle(options), concealActionTitle: UNNotificationAttachment.concealActionTitle(options))
     }
 
     // Kotlin's delegating constructor call can't read the option key globals itself.
@@ -836,6 +903,14 @@ public class UNNotificationAttachment {
 
     private static func hidesThumbnail(_ options: [AnyHashable: Any]?) -> Bool {
         return options?[UNNotificationAttachmentOptionsThumbnailHiddenKey] as? Bool ?? false
+    }
+
+    private static func revealActionTitle(_ options: [AnyHashable: Any]?) -> String? {
+        return options?[UNNotificationAttachmentOptionsRevealActionTitleKey] as? String
+    }
+
+    private static func concealActionTitle(_ options: [AnyHashable: Any]?) -> String? {
+        return options?[UNNotificationAttachmentOptionsConcealActionTitleKey] as? String
     }
 
     public static func attachment(withIdentifier identifier: String, url: URL, options: [AnyHashable: Any]? = nil) throws -> UNNotificationAttachment {
@@ -1073,6 +1148,16 @@ public class NotificationWorker : Worker {
     static let largeIconKey = "image_url"
     /// The URL of the image drawn in the expanded notification.
     static let bigPictureKey = "big_picture_url"
+    /// The title of the button revealing the expanded picture, which is not drawn until then.
+    static let revealActionTitleKey = "reveal_action_title"
+    /// The title of the button hiding it again.
+    static let concealActionTitleKey = "conceal_action_title"
+    /// Whether the expanded picture is revealed: set by the buttons, which post the notification again.
+    static let revealedKey = "revealed"
+    /// When the notification was first posted, kept by the buttons' posts so it doesn't move up the shade.
+    static let postedMillisKey = "posted_millis"
+    /// The keys that describe the notification itself, which its tap's intent does not carry.
+    static let notificationKeys: Set<String> = ["title", "body", "id", largeIconKey, bigPictureKey, revealActionTitleKey, concealActionTitleKey, revealedKey, postedMillisKey]
 
     public init(context: Context, params: WorkerParameters) {
         super.init(context, params)
@@ -1089,7 +1174,7 @@ public class NotificationWorker : Worker {
         let id = inputData.getInt("id", 0)
         let title = inputData.getString("title") ?? ""
         let body = inputData.getString("body") ?? ""
-        let postedMillis = System.currentTimeMillis()
+        let postedMillis = inputData.getLong(postedMillisKey, System.currentTimeMillis())
 
         let intent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName())
         // SINGLE_TOP hands a running activity the tap as a new intent, where CLEAR_TOP alone would recreate it.
@@ -1097,7 +1182,7 @@ public class NotificationWorker : Worker {
         
         let bundle = android.os.Bundle()
         let allData = inputData.keyValueMap
-        for (key, value) in allData where key != "title" && key != "body" && key != "id" && key != largeIconKey && key != bigPictureKey {
+        for (key, value) in allData where !notificationKeys.contains(key) {
             if let s = value as? String {
                 bundle.putString(key, s)
             } else if let b = value as? Bool {
@@ -1125,21 +1210,30 @@ public class NotificationWorker : Worker {
         }
         
         // Build the notification.
-        let pendingIntent = PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)
         let builder = NotificationCompat.Builder(context, channelID)
             .setContentTitle(title)
             .setContentText(body)
             .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
             .setWhen(postedMillis)
             .setShowWhen(true)
+        // A package without a launcher activity has no intent, and updating its pending intent then throws.
+        if let intent {
+            builder.setContentIntent(PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
+        }
 
         // The small icon is a status bar glyph, drawn from its alpha alone, so an attachment is the large icon instead.
-        let largeIcon = bitmap(at: inputData.getString(largeIconKey), context: context)
+        let revealActionTitle = inputData.getString(revealActionTitleKey)
+        let revealed = inputData.getBoolean(revealedKey, false)
+        let picture = revealActionTitle == nil || revealed ? bitmap(at: inputData.getString(bigPictureKey), context: context) : nil
+        // Revealed, the picture is the collapsed thumbnail too.
+        let largeIcon = (revealed ? picture : nil) ?? bitmap(at: inputData.getString(largeIconKey), context: context)
         if let largeIcon {
             builder.setLargeIcon(largeIcon)
         }
-        if let picture = bitmap(at: inputData.getString(bigPictureKey), context: context) {
+        if let revealActionTitle, inputData.getString(bigPictureKey) != nil {
+            addRevealAction(to: builder, title: revealed ? inputData.getString(concealActionTitleKey) : revealActionTitle, inputData: inputData, revealed: revealed, postedMillis: postedMillis, context: context)
+        }
+        if let picture {
             let style = NotificationCompat.BigPictureStyle().bigPicture(picture)
             if largeIcon != nil {
                 // Expanded, the picture replaces the thumbnail, as on iOS.
@@ -1172,6 +1266,43 @@ public class NotificationWorker : Worker {
         notificationManager.notify(id, builder.build())
     }
 
+    /// Adds the button that posts the notification again with its picture revealed or hidden, without opening the app.
+    private static func addRevealAction(to builder: NotificationCompat.Builder, title: String?, inputData: Data, revealed: Bool, postedMillis: Long, context: Context) {
+        // A button press posts again: only the first post alerts.
+        builder.setOnlyAlertOnce(true)
+        guard let title else {
+            return
+        }
+        let intent = actionIntent(inputData, revealing: !revealed, postedMillis: postedMillis, context: context)
+        let pendingIntent = PendingIntent.getBroadcast(context, inputData.getInt("id", 0), intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)
+        let action = NotificationCompat.Action.Builder(nil as IconCompat?, title, pendingIntent)
+            // Revealing from the lock screen asks for the device to be unlocked first.
+            .setAuthenticationRequired(!revealed)
+            .build()
+        builder.addAction(action)
+    }
+
+    /// The intent of the button posting the notification `inputData` describes again, with its picture revealed or not.
+    static func actionIntent(_ inputData: Data, revealing: Bool, postedMillis: Long, context: Context) -> Intent {
+        let intent = Intent(context, NotificationActionReceiver.self.java)
+        for (key, value) in inputData.keyValueMap {
+            if let s = value as? String {
+                intent.putExtra(key, s)
+            } else if let b = value as? Bool {
+                intent.putExtra(key, b)
+            } else if let i = value as? Int {
+                intent.putExtra(key, i)
+            } else if let l = value as? Long {
+                intent.putExtra(key, l)
+            } else if let d = value as? Double {
+                intent.putExtra(key, d)
+            }
+        }
+        intent.putExtra(revealedKey, revealing)
+        intent.putExtra(postedMillisKey, postedMillis)
+        return intent
+    }
+
     /// Decodes the image at `urlString`, a file or content URL; nil when there is none or it can't be read.
     private static func bitmap(at urlString: String?, context: Context) -> android.graphics.Bitmap? {
         guard let urlString else {
@@ -1188,6 +1319,25 @@ public class NotificationWorker : Worker {
             logger.warning("ignoring an unreadable notification attachment: \(error)")
             return nil
         }
+    }
+}
+
+/// Receives the presses on a notification's reveal button: posts the notification again from the data the button
+/// carries, with its picture revealed or hidden.
+public class NotificationActionReceiver : BroadcastReceiver {
+    public override init() {
+        super.init()
+    }
+
+    public override func onReceive(context: Context, intent: Intent) {
+        guard let extras = intent.getExtras() else {
+            return
+        }
+        let data = java.util.HashMap<String, Any?>()
+        for key in extras.keySet() {
+            data.put(key, extras.get(key))
+        }
+        NotificationWorker.post(Data.Builder().putAll(data).build(), context: context)
     }
 }
 #endif

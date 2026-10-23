@@ -170,7 +170,72 @@ final class NotificationRequestTests: SkipUITestCase {
         #endif
     }
 
+    func testRevealButtonPostsTheHiddenPictureAgain() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        _ = workManager()
+        let blurred = imageFile("blurred.png")
+        let clear = imageFile("clear.png")
+        let data = Data.Builder()
+            .putInt("id", 45)
+            .putString(NotificationWorker.largeIconKey, blurred.absoluteString)
+            .putString(NotificationWorker.bigPictureKey, clear.absoluteString)
+            .putString(NotificationWorker.revealActionTitleKey, "Show")
+            .putString(NotificationWorker.concealActionTitleKey, "Hide")
+            .build()
+
+        NotificationWorker.post(data, context: context)
+        let hidden = try XCTUnwrap(activeNotification(id: 45))
+        XCTAssertFalse(hidden.extras.containsKey(android.app.Notification.EXTRA_PICTURE))
+        XCTAssertEqual(actionTitles(hidden), "Show")
+
+        press(hidden)
+        let revealed = try XCTUnwrap(activeNotification(id: 45))
+        XCTAssertTrue(revealed.extras.containsKey(android.app.Notification.EXTRA_PICTURE))
+        XCTAssertEqual(actionTitles(revealed), "Hide")
+        XCTAssertEqual(postedTime(revealed), postedTime(hidden))
+
+        press(revealed)
+        let hiddenAgain = try XCTUnwrap(activeNotification(id: 45))
+        XCTAssertFalse(hiddenAgain.extras.containsKey(android.app.Notification.EXTRA_PICTURE))
+        XCTAssertEqual(actionTitles(hiddenAgain), "Show")
+        #endif
+    }
+
+    func testAttachmentCopyOutlivesTheOriginal() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        let original = imageFile("original.png")
+        let store = UNUserNotificationCenter.attachmentStore(id: 46, context: context)
+        let copy = UNUserNotificationCenter.store(original, as: "big_picture", in: store)
+        java.io.File(original.path).delete()
+
+        XCTAssertNotEqual(copy, original)
+        XCTAssertTrue(java.io.File(copy.path).exists())
+        // A new request with the same identifier starts from an empty store.
+        _ = UNUserNotificationCenter.attachmentStore(id: 46, context: context)
+        XCTAssertFalse(java.io.File(copy.path).exists())
+        #endif
+    }
+
     #if SKIP
+    private func actionTitles(_ notification: android.app.Notification) -> String {
+        // SKIP REPLACE: return notification.actions.orEmpty().joinToString { it.title.toString() }
+        return ""
+    }
+
+    private func postedTime(_ notification: android.app.Notification) -> Int64 {
+        // SKIP REPLACE: return notification.`when`
+        return 0
+    }
+
+    private func press(_ notification: android.app.Notification) {
+        notification.actions[0].actionIntent.send()
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+    }
+
     private func activeNotification(id: Int) -> android.app.Notification? {
         let manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! android.app.NotificationManager
         return manager.activeNotifications.firstOrNull { $0.id == id }?.notification

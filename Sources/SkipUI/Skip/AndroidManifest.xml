@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- A notification's reveal button, UNNotificationAttachmentOptionsRevealActionTitleKey. -->
+        <receiver
+            android:name="skip.ui.NotificationActionReceiver"
+            android:exported="false" />
+    </application>
+</manifest>
