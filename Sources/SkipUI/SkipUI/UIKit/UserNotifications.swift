@@ -127,21 +127,30 @@ public final class UNUserNotificationCenter {
         // A visible image is the thumbnail beside the text, and a hidden one shows only when expanded:
         // a small image such as an avatar must not be blown up into the expanded picture.
         let images = request.content.attachments.filter { $0.type == "public.image" }
-        if !images.isEmpty {
-            pruneAttachmentStores(context: context)
-            let storedAttachments = UNUserNotificationCenter.freshAttachmentStore(id: request.identifier.hashValue, context: context)
-            let thumbnail = images.first(where: { !$0.hidesThumbnail })
-            let thumbnailCopy = thumbnail.map { UNUserNotificationCenter.store($0.url, as: "large_icon", in: storedAttachments) }
-            if let thumbnailCopy {
-                dataBuilder.putString(NotificationWorker.largeIconKey, thumbnailCopy.absoluteString)
-            }
-            if let picture = images.first(where: { $0.hidesThumbnail }) {
-                let pictureCopy = picture.url == thumbnail?.url ? thumbnailCopy! : UNUserNotificationCenter.store(picture.url, as: "big_picture", in: storedAttachments)
-                dataBuilder.putString(NotificationWorker.bigPictureKey, pictureCopy.absoluteString)
-                if let revealTitle = picture.revealActionTitle {
-                    dataBuilder.putString(NotificationWorker.revealActionTitleKey, revealTitle)
-                    dataBuilder.putString(NotificationWorker.concealActionTitleKey, picture.concealActionTitle)
-                }
+        let thumbnail = images.first(where: { !$0.hidesThumbnail })
+        let picture = images.first(where: { $0.hidesThumbnail })
+
+        // Get the next trigger date (if any).
+        let nextDate = (request.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate() ??
+                       (request.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate()
+        let postsNow = nextDate == nil || nextDate!.currentTimeMillis - System.currentTimeMillis() <= UNUserNotificationCenter.immediateDelayMillis
+
+        // A post now reads the files before returning; a later one, or a reveal button posting again, reads copies.
+        var storedAttachments: java.io.File? = nil
+        if !images.isEmpty && (!postsNow || picture?.revealActionTitle != nil) {
+            await pruneAttachmentStores(context: context)
+            storedAttachments = UNUserNotificationCenter.newAttachmentStore(id: request.identifier.hashValue, context: context)
+        }
+        let thumbnailURL = thumbnail.map { UNUserNotificationCenter.store($0.url, as: "large_icon", in: storedAttachments) }
+        if let thumbnailURL {
+            dataBuilder.putString(NotificationWorker.largeIconKey, thumbnailURL.absoluteString)
+        }
+        if let picture {
+            let pictureURL = picture.url == thumbnail?.url ? thumbnailURL! : UNUserNotificationCenter.store(picture.url, as: "big_picture", in: storedAttachments)
+            dataBuilder.putString(NotificationWorker.bigPictureKey, pictureURL.absoluteString)
+            if let revealTitle = picture.revealActionTitle {
+                dataBuilder.putString(NotificationWorker.revealActionTitleKey, revealTitle)
+                dataBuilder.putString(NotificationWorker.concealActionTitleKey, picture.concealActionTitle)
             }
         }
 
@@ -159,10 +168,7 @@ public final class UNUserNotificationCenter {
             }
         }
         
-        // Get the next trigger date (if any).
-        let nextDate = (request.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate() ??
-                       (request.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate()
-        if nextDate == nil || nextDate!.currentTimeMillis - System.currentTimeMillis() <= UNUserNotificationCenter.immediateDelayMillis {
+        if postsNow {
             // Posted before returning, as WorkManager can run jobs out of order: serial adds stay in order in the shade,
             // and the attachments are read while their files still exist.
             UNUserNotificationCenter.postRequest(identifier: request.identifier, data: dataBuilder.build(), context: context)
@@ -297,12 +303,12 @@ public final class UNUserNotificationCenter {
         saveRequest(identifier: identifier, date: date, context: context)
     }
 
-    /// The directory holding copies of the attachments of the notification with `id`, emptied first. iOS moves an
-    /// attachment's file into its own store when the request is added; the copy keeps the image for as long as the
-    /// notification can show it, as its owner may delete the original.
-    static func freshAttachmentStore(id: Int, context: Context) -> java.io.File {
-        let directory = java.io.File(attachmentStoresDirectory(context), String(describing: id))
-        directory.deleteRecursively()
+    /// A new directory for copies of the attachments of the notification with `id`. iOS moves an attachment's file
+    /// into its own store when the request is added; the copy keeps the image for as long as the notification can
+    /// show it, as its owner may delete the original. Each request gets its own, so a request replacing a notification
+    /// still showing leaves that notification's files alone.
+    static func newAttachmentStore(id: Int, context: Context) -> java.io.File {
+        let directory = java.io.File(java.io.File(attachmentStoresDirectory(context), String(describing: id)), String(describing: System.currentTimeMillis()))
         directory.mkdirs()
         return directory
     }
@@ -311,8 +317,12 @@ public final class UNUserNotificationCenter {
         return java.io.File(context.getNoBackupFilesDir(), "skip_usernotifications_attachments")
     }
 
-    /// Copies the file at `url` into `directory` as `name`, returning the copy's URL, or `url` when it can't be copied.
-    static func store(_ url: URL, as name: String, in directory: java.io.File) -> URL {
+    /// Copies the file at `url` into `directory` as `name`, returning the copy's URL, or `url` when there is no
+    /// directory or the file can't be copied.
+    static func store(_ url: URL, as name: String, in directory: java.io.File?) -> URL {
+        guard let directory else {
+            return url
+        }
         do {
             let copy = java.io.File(directory, name)
             java.io.File(url.path).copyTo(copy, overwrite: true)
@@ -323,30 +333,34 @@ public final class UNUserNotificationCenter {
         }
     }
 
-    private static let attachmentStoreGraceMillis: Long = 10 * 60 * 1000
+    /// Copies are kept this long after their notification stops showing: a snoozed notification is not an active one,
+    /// and a notification joins the active ones some time after it's posted.
+    private static let attachmentStoreGraceMillis: Long = 24 * 60 * 60 * 1000
+    private static let attachmentPruneIntervalMillis: Long = 10 * 60 * 1000
     private static var lastAttachmentPruneMillis: Long = 0
 
-    /// Deletes the attachment copies of notifications that are neither showing nor waiting to be posted, at most once per
-    /// grace period. A notification joins the active ones some time after it's posted, so recent copies are kept too.
-    private func pruneAttachmentStores(context: Context) {
+    /// Deletes the attachment copies of notifications that are neither showing nor queued, once their grace period is
+    /// over. Runs at most every ten minutes.
+    private func pruneAttachmentStores(context: Context) async {
         let now = System.currentTimeMillis()
-        guard now - UNUserNotificationCenter.lastAttachmentPruneMillis >= UNUserNotificationCenter.attachmentStoreGraceMillis else {
+        guard now - UNUserNotificationCenter.lastAttachmentPruneMillis >= UNUserNotificationCenter.attachmentPruneIntervalMillis else {
             return
         }
         UNUserNotificationCenter.lastAttachmentPruneMillis = now
-        let recent = now - UNUserNotificationCenter.attachmentStoreGraceMillis
+        let expired = now - UNUserNotificationCenter.attachmentStoreGraceMillis
         let notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
         var kept = Set<String>()
         for notification in notificationManager.getActiveNotifications() {
             kept.insert(String(describing: notification.getId()))
         }
-        for request in getAllNotificationRequests() where request.timestamp > now {
-            kept.insert(String(describing: request.id.hashValue))
+        // Queued work can run after its date.
+        for identifier in await UNUserNotificationCenter.queuedNotificationIdentifiers(WorkManager.getInstance(context)) {
+            kept.insert(String(describing: identifier.hashValue))
         }
         let directories = UNUserNotificationCenter.attachmentStoresDirectory(context).listFiles()
         for index in 0..<(directories?.size ?? 0) {
             let directory = directories![index]
-            if !kept.contains(directory.getName()) && directory.lastModified() < recent {
+            if !kept.contains(directory.getName()) && directory.lastModified() < expired {
                 directory.deleteRecursively()
             }
         }
@@ -1162,13 +1176,13 @@ public class NotificationWorker : Worker {
     /// The URL of the image drawn in the expanded notification.
     static let bigPictureKey = "big_picture_url"
     /// The title of the button revealing the expanded picture, which is not drawn until then.
-    static let revealActionTitleKey = "reveal_action_title"
+    static let revealActionTitleKey = "skip.ui.UNNotification.revealActionTitle"
     /// The title of the button hiding it again.
-    static let concealActionTitleKey = "conceal_action_title"
+    static let concealActionTitleKey = "skip.ui.UNNotification.concealActionTitle"
     /// Whether the expanded picture is revealed: set by the buttons, which post the notification again.
-    static let revealedKey = "revealed"
+    static let revealedKey = "skip.ui.UNNotification.revealed"
     /// When the notification was first posted, kept by the buttons' posts so it doesn't move up the shade.
-    static let postedMillisKey = "posted_millis"
+    static let postedMillisKey = "skip.ui.UNNotification.postedMillis"
     /// The keys that describe the notification itself, which its tap's intent does not carry.
     static let notificationKeys: Set<String> = ["title", "body", "id", largeIconKey, bigPictureKey, revealActionTitleKey, concealActionTitleKey, revealedKey, postedMillisKey]
 
@@ -1337,8 +1351,18 @@ public class NotificationActionReceiver : BroadcastReceiver {
         }
         let result = goAsync()
         NotificationActionReceiver.executor.execute {
-            NotificationWorker.post(Data.fromByteArray(bytes), context: context)
-            result.finish()
+            defer { result.finish() }
+            do {
+                let data = Data.fromByteArray(bytes)
+                // Before Android 12 the button can't ask for an unlock, so it reveals nothing on the lock screen.
+                let keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as! android.app.KeyguardManager
+                if data.getBoolean(NotificationWorker.revealedKey, false) && Build.VERSION.SDK_INT < Build.VERSION_CODES.S && keyguard.isKeyguardLocked() {
+                    return
+                }
+                NotificationWorker.post(data, context: context)
+            } catch {
+                logger.warning("could not post a notification again from its button: \(error)")
+            }
         }
     }
 }
