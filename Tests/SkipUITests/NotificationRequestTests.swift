@@ -170,39 +170,88 @@ final class NotificationRequestTests: SkipUITestCase {
         #endif
     }
 
-    func testRevealButtonPostsTheHiddenPictureAgain() throws {
+    func testCategoryActionsBecomeButtons() throws {
         #if !SKIP
         throw XCTSkip("Notification requests are WorkManager work on Android")
         #else
         _ = workManager()
-        let executor = NotificationActionReceiver.executor
-        NotificationActionReceiver.executor = DirectExecutor()
-        defer { NotificationActionReceiver.executor = executor }
-        let blurred = imageFile("blurred.png")
-        let clear = imageFile("clear.png")
-        let data = Data.Builder()
-            .putInt("id", 45)
-            .putString(NotificationWorker.largeIconKey, blurred.absoluteString)
-            .putString(NotificationWorker.bigPictureKey, clear.absoluteString)
-            .putString(NotificationWorker.revealActionTitleKey, "Show")
-            .putString(NotificationWorker.concealActionTitleKey, "Hide")
-            .build()
+        UNUserNotificationCenter.current().setNotificationCategories([UNNotificationCategory(identifier: "mature", actions: [
+            UNNotificationAction(identifier: "show", title: "Show", options: [.authenticationRequired]),
+            UNNotificationAction(identifier: "delete", title: "Delete", options: [.destructive]),
+        ], intentIdentifiers: [])])
 
-        NotificationWorker.post(data, context: context)
-        let hidden = try XCTUnwrap(activeNotification(id: 45))
-        XCTAssertFalse(hidden.extras.containsKey(android.app.Notification.EXTRA_PICTURE))
-        XCTAssertEqual(actionTitles(hidden), "Show")
+        NotificationWorker.post(Data.Builder().putInt("id", 45).putString(NotificationWorker.categoryKey, "mature").build(), context: context)
+        let posted = try XCTUnwrap(activeNotification(id: 45))
+        XCTAssertEqual(actionTitles(posted), "Show, Delete")
+        XCTAssertTrue(posted.actions[0].isAuthenticationRequired())
+        XCTAssertFalse(posted.actions[1].isAuthenticationRequired())
 
-        press(hidden)
-        let revealed = try XCTUnwrap(activeNotification(id: 45))
-        XCTAssertTrue(revealed.extras.containsKey(android.app.Notification.EXTRA_PICTURE))
-        XCTAssertEqual(actionTitles(revealed), "Hide")
-        XCTAssertEqual(postedTime(revealed), postedTime(hidden))
+        NotificationWorker.post(Data.Builder().putInt("id", 46).putString(NotificationWorker.categoryKey, "unknown").build(), context: context)
+        XCTAssertEqual(actionTitles(try XCTUnwrap(activeNotification(id: 46))), "")
+        #endif
+    }
 
-        press(revealed)
-        let hiddenAgain = try XCTUnwrap(activeNotification(id: 45))
-        XCTAssertFalse(hiddenAgain.extras.containsKey(android.app.Notification.EXTRA_PICTURE))
-        XCTAssertEqual(actionTitles(hiddenAgain), "Show")
+    func testPassiveInterruptionLevelPostsSilently() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        _ = workManager()
+        NotificationWorker.post(Data.Builder().putInt("id", 47).putInt(NotificationWorker.interruptionLevelKey, UNNotificationInterruptionLevel.passive.rawValue).build(), context: context)
+        NotificationWorker.post(Data.Builder().putInt("id", 48).build(), context: context)
+        // NotificationCompat files a silent notification under its own group.
+        XCTAssertEqual(try XCTUnwrap(activeNotification(id: 47)).getGroup(), "silent")
+        XCTAssertNil(try XCTUnwrap(activeNotification(id: 48)).getGroup())
+        #endif
+    }
+
+    func testButtonHandsItsResponseToTheDelegate() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        _ = workManager()
+        UNUserNotificationCenter.current().setNotificationCategories([UNNotificationCategory(identifier: "mature", actions: [UNNotificationAction(identifier: "show", title: "Show")], intentIdentifiers: [])])
+        let delegate = RecordingDelegate()
+        let center = UNUserNotificationCenter.current()
+        let previousDelegate = center.delegate
+        center.delegate = delegate
+        defer { center.delegate = previousDelegate }
+
+        NotificationWorker.post(Data.Builder()
+            .putInt("id", 49)
+            .putString(NotificationWorker.identifierKey, "submission.1")
+            .putString("title", "Moonlit Fox")
+            .putString("body", "By Kiyari")
+            .putString(NotificationWorker.categoryKey, "mature")
+            .putString("link", "https://example.com/view/1/")
+            .build(), context: context)
+        try XCTUnwrap(activeNotification(id: 49)).actions[0].actionIntent.send()
+        for _ in 0..<100 where delegate.response == nil {
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            java.lang.Thread.sleep(Int64(20))
+        }
+
+        let response = try XCTUnwrap(delegate.response)
+        XCTAssertEqual(response.actionIdentifier, "show")
+        XCTAssertEqual(response.notification.request.identifier, "submission.1")
+        XCTAssertEqual(response.notification.request.content.title, "Moonlit Fox")
+        XCTAssertEqual(response.notification.request.content.body, "By Kiyari")
+        XCTAssertEqual(response.notification.request.content.categoryIdentifier, "mature")
+        XCTAssertEqual(response.notification.request.content.userInfo["link"] as? String, "https://example.com/view/1/")
+        #endif
+    }
+
+    func testCategoriesAreSaved() async throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        UNUserNotificationCenter.current().setNotificationCategories([UNNotificationCategory(identifier: "mature", actions: [UNNotificationAction(identifier: "show", title: "Show", options: [.authenticationRequired])], intentIdentifiers: [], options: [.hiddenPreviewsShowTitle])])
+        let categories = await UNUserNotificationCenter.current().getNotificationCategories()
+        let category = try XCTUnwrap(categories.first)
+        XCTAssertEqual(categories.count, 1)
+        XCTAssertEqual(category.identifier, "mature")
+        XCTAssertEqual(category.options.rawValue, UNNotificationCategoryOptions.hiddenPreviewsShowTitle.rawValue)
+        XCTAssertEqual(category.actions.map(\.identifier), ["show"])
+        XCTAssertEqual(category.actions[0].options.rawValue, UNNotificationActionOptions.authenticationRequired.rawValue)
         #endif
     }
 
@@ -227,16 +276,6 @@ final class NotificationRequestTests: SkipUITestCase {
         return ""
     }
 
-    private func postedTime(_ notification: android.app.Notification) -> Int64 {
-        // SKIP REPLACE: return notification.`when`
-        return 0
-    }
-
-    private func press(_ notification: android.app.Notification) {
-        notification.actions[0].actionIntent.send()
-        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
-    }
-
     private func activeNotification(id: Int) -> android.app.Notification? {
         let manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! android.app.NotificationManager
         return manager.activeNotifications.firstOrNull { $0.id == id }?.notification
@@ -254,6 +293,21 @@ final class NotificationRequestTests: SkipUITestCase {
 }
 
 #if SKIP
+final class RecordingDelegate: UNUserNotificationCenterDelegate {
+    var response: UNNotificationResponse?
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive notification: UNNotificationResponse) async {
+        response = notification
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        return []
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, openSettingsFor notification: UNNotification?) {
+    }
+}
+
 final class DirectExecutor: java.util.concurrent.Executor {
     override func execute(command: java.lang.Runnable) {
         command.run()

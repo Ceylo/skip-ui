@@ -54,6 +54,19 @@ final class NotificationResponseTests: SkipUITestCase {
         #endif
     }
 
+    func testForegroundButtonIntentIsItsActionsResponse() throws {
+        #if !SKIP
+        throw XCTSkip("Notification taps arrive as Android intents")
+        #else
+        let token = UNUserNotificationCenter.issueResponseToken(identifier: "reminder.2", context: context)
+        let intent = tapIntent(identifier: "reminder.2", token: token, userInfo: ["link": "app://open"])
+        intent.putExtra("skip.ui.UNNotificationResponse.actionIdentifier", "open")
+        let response = try XCTUnwrap(UNUserNotificationCenter.response(from: intent, context: context))
+        XCTAssertEqual(response.actionIdentifier, "open")
+        XCTAssertEqual(response.notification.request.content.userInfo.count, 1)
+        #endif
+    }
+
     func testTapWithoutTheNotificationsTokenIsNotAResponse() throws {
         #if !SKIP
         throw XCTSkip("Notification taps arrive as Android intents")

@@ -123,6 +123,8 @@ public final class UNUserNotificationCenter {
             .putString("body", request.content.body)
             .putInt("id", request.identifier.hashValue)
             .putString(NotificationWorker.identifierKey, request.identifier)
+            .putString(NotificationWorker.categoryKey, request.content.categoryIdentifier)
+            .putInt(NotificationWorker.interruptionLevelKey, request.content.interruptionLevel.rawValue)
         
         // A visible image is the thumbnail beside the text, and a hidden one shows only when expanded:
         // a small image such as an avatar must not be blown up into the expanded picture.
@@ -135,9 +137,9 @@ public final class UNUserNotificationCenter {
                        (request.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate()
         let postsNow = nextDate == nil || nextDate!.currentTimeMillis - System.currentTimeMillis() <= UNUserNotificationCenter.immediateDelayMillis
 
-        // A post now reads the files before returning; a later one, or a reveal button posting again, reads copies.
+        // A post now reads the files before returning; a later one reads copies, as iOS moves the files into its store.
         var storedAttachments: java.io.File? = nil
-        if !images.isEmpty && (!postsNow || picture?.revealActionTitle != nil) {
+        if !images.isEmpty && !postsNow {
             await pruneAttachmentStores(context: context)
             storedAttachments = UNUserNotificationCenter.newAttachmentStore(id: request.identifier.hashValue, context: context)
         }
@@ -148,10 +150,6 @@ public final class UNUserNotificationCenter {
         if let picture {
             let pictureURL = picture.url == thumbnail?.url ? thumbnailURL! : UNUserNotificationCenter.store(picture.url, as: "big_picture", in: storedAttachments)
             dataBuilder.putString(NotificationWorker.bigPictureKey, pictureURL.absoluteString)
-            if let revealTitle = picture.revealActionTitle {
-                dataBuilder.putString(NotificationWorker.revealActionTitleKey, revealTitle)
-                dataBuilder.putString(NotificationWorker.concealActionTitleKey, picture.concealActionTitle)
-            }
         }
 
         for (key, value) in request.content.userInfo {
@@ -269,13 +267,29 @@ public final class UNUserNotificationCenter {
         #endif
     }
 
-    @available(*, unavailable)
-    public func setNotificationCategories(_ categories: Set<AnyHashable /* UNNotificationCategory */>) {
+    /// The categories are saved, as iOS keeps them, so a process that only posts or answers a button finds them.
+    public func setNotificationCategories(_ categories: Set<UNNotificationCategory>) {
+        #if SKIP
+        UNUserNotificationCenter.saveCategories(Array(categories), context: ProcessInfo.processInfo.androidContext)
+        #endif
     }
 
-    @available(*, unavailable)
-    public func getNotificationCategories() async -> Set<AnyHashable /* UNNotificationCategory */> {
+    // SKIP @bridge
+    public func setNotificationCategories(bridgedCategories: [UNNotificationCategory]) {
+        setNotificationCategories(Set(bridgedCategories))
+    }
+
+    public func getNotificationCategories() async -> Set<UNNotificationCategory> {
+        #if SKIP
+        return Set(UNUserNotificationCenter.loadCategories(context: ProcessInfo.processInfo.androidContext))
+        #else
         fatalError()
+        #endif
+    }
+
+    // SKIP @bridge
+    public func bridgedNotificationCategories() async -> [UNNotificationCategory] {
+        return Array(await getNotificationCategories())
     }
 
     #if SKIP
@@ -364,6 +378,55 @@ public final class UNUserNotificationCenter {
                 directory.deleteRecursively()
             }
         }
+    }
+
+    private static let categoriesKey = "categories"
+
+    static func saveCategories(_ categories: [UNNotificationCategory], context: Context) {
+        let json = org.json.JSONArray()
+        for category in categories {
+            let actions = org.json.JSONArray()
+            for action in category.actions {
+                actions.put(org.json.JSONObject().put("identifier", action.identifier).put("title", action.title).put("options", action.options.rawValue))
+            }
+            json.put(org.json.JSONObject().put("identifier", category.identifier).put("actions", actions).put("options", category.options.rawValue))
+        }
+        context.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE).edit()
+            .putString(categoriesKey, json.toString())
+            .commit()
+    }
+
+    static func loadCategories(context: Context) -> [UNNotificationCategory] {
+        guard let saved = context.getSharedPreferences("__skip_usernotifications", Context.MODE_PRIVATE).getString(categoriesKey, nil) else {
+            return []
+        }
+        var categories: [UNNotificationCategory] = []
+        do {
+            let json = org.json.JSONArray(saved)
+            for i in 0..<json.length() {
+                let category = json.getJSONObject(i)
+                let actionsJSON = category.getJSONArray("actions")
+                var actions: [UNNotificationAction] = []
+                for j in 0..<actionsJSON.length() {
+                    let action = actionsJSON.getJSONObject(j)
+                    actions.append(UNNotificationAction(identifier: action.getString("identifier"), title: action.getString("title"), options: UNNotificationActionOptions(rawValue: action.getInt("options"))))
+                }
+                categories.append(UNNotificationCategory(identifier: category.getString("identifier"), actions: actions, intentIdentifiers: [], options: UNNotificationCategoryOptions(rawValue: category.getInt("options"))))
+            }
+        } catch {
+            logger.warning("ignoring unreadable notification categories: \(error)")
+        }
+        return categories
+    }
+
+    /// Delivers the response to a button that doesn't open the app, waiting for the delegate to handle it. Without a
+    /// delegate yet, it waits for one, as a tap does.
+    func receiveActionResponse(_ response: UNNotificationResponse) async {
+        guard let delegate else {
+            pendingResponse = response
+            return
+        }
+        await delegate.userNotificationCenter(self, didReceive: response)
     }
 
     /// A trigger at most this far away posts at once, without a WorkManager job.
@@ -570,7 +633,7 @@ public final class UNUserNotificationCenter {
             preferences.edit().remove(responseTokenKey(identifier)).commit()
 
             var userInfo: [AnyHashable: Any] = [:]
-            for key in extras.keySet() where key != NotificationWorker.identifierKey && key != NotificationWorker.tokenKey && key != NotificationWorker.dateKey {
+            for key in extras.keySet() where key != NotificationWorker.identifierKey && key != NotificationWorker.tokenKey && key != NotificationWorker.dateKey && key != NotificationWorker.actionIdentifierKey {
                 // NotificationWorker writes these types only.
                 if let value = extras.get(key), value is String || value is Bool || value is Int || value is Double {
                     userInfo[key] = value
@@ -580,7 +643,8 @@ public final class UNUserNotificationCenter {
             content.userInfo = userInfo
             let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
             let date = Date(timeIntervalSince1970: Double(extras.getLong(NotificationWorker.dateKey, 0)) / 1000.0)
-            return UNNotificationResponse(actionIdentifier: UNNotificationDefaultActionIdentifier, notification: UNNotification(request: request, date: date))
+            let actionIdentifier = extras.getString(NotificationWorker.actionIdentifierKey) ?? UNNotificationDefaultActionIdentifier
+            return UNNotificationResponse(actionIdentifier: actionIdentifier, notification: UNNotification(request: request, date: date))
         } catch {
             logger.warning("ignoring an unreadable intent: \(error)")
             return nil
@@ -692,6 +756,105 @@ public final class UNNotificationResponse {
 }
 
 // SKIP @bridge
+public struct UNNotificationActionOptions : OptionSet {
+    // SKIP @bridge
+    public let rawValue: Int
+
+    // SKIP @bridge
+    public init(rawValue: Int) {
+        self.rawValue = rawValue
+    }
+
+    public static let authenticationRequired = UNNotificationActionOptions(rawValue: 1 << 0) // For bridging
+    public static let destructive = UNNotificationActionOptions(rawValue: 1 << 1) // For bridging
+    public static let foreground = UNNotificationActionOptions(rawValue: 1 << 2) // For bridging
+}
+
+// SKIP @bridge
+public final class UNNotificationAction {
+    // SKIP @bridge
+    public let identifier: String
+    // SKIP @bridge
+    public let title: String
+    public let options: UNNotificationActionOptions
+
+    public init(identifier: String, title: String, options: UNNotificationActionOptions = []) {
+        self.identifier = identifier
+        self.title = title
+        self.options = options
+    }
+
+    // SKIP @bridge
+    public convenience init(identifier: String, title: String, bridgedOptions: Int) {
+        self.init(identifier: identifier, title: title, options: UNNotificationActionOptions(rawValue: bridgedOptions))
+    }
+
+    // SKIP @bridge
+    public var bridgedOptions: Int {
+        return options.rawValue
+    }
+}
+
+// SKIP @bridge
+public struct UNNotificationCategoryOptions : OptionSet {
+    // SKIP @bridge
+    public let rawValue: Int
+
+    // SKIP @bridge
+    public init(rawValue: Int) {
+        self.rawValue = rawValue
+    }
+
+    public static let customDismissAction = UNNotificationCategoryOptions(rawValue: 1 << 0) // For bridging
+    public static let allowInCarPlay = UNNotificationCategoryOptions(rawValue: 1 << 1) // For bridging
+    public static let hiddenPreviewsShowTitle = UNNotificationCategoryOptions(rawValue: 1 << 2) // For bridging
+    public static let hiddenPreviewsShowSubtitle = UNNotificationCategoryOptions(rawValue: 1 << 3) // For bridging
+}
+
+/// Its actions become the buttons of the notifications whose `categoryIdentifier` names it.
+// SKIP @bridge
+public final class UNNotificationCategory : Hashable {
+    // SKIP @bridge
+    public let identifier: String
+    // SKIP @bridge
+    public let actions: [UNNotificationAction]
+    public let intentIdentifiers: [String]
+    public let options: UNNotificationCategoryOptions
+
+    public init(identifier: String, actions: [UNNotificationAction], intentIdentifiers: [String], options: UNNotificationCategoryOptions = []) {
+        self.identifier = identifier
+        self.actions = actions
+        self.intentIdentifiers = intentIdentifiers
+        self.options = options
+    }
+
+    // SKIP @bridge
+    public convenience init(identifier: String, actions: [UNNotificationAction], intentIdentifiers: [String], bridgedOptions: Int) {
+        self.init(identifier: identifier, actions: actions, intentIdentifiers: intentIdentifiers, options: UNNotificationCategoryOptions(rawValue: bridgedOptions))
+    }
+
+    // SKIP @bridge
+    public var bridgedOptions: Int {
+        return options.rawValue
+    }
+
+    public static func ==(lhs: UNNotificationCategory, rhs: UNNotificationCategory) -> Bool {
+        return lhs.identifier == rhs.identifier
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(identifier)
+    }
+}
+
+public enum UNNotificationInterruptionLevel : Int {
+    case passive = 0
+    case active = 1
+    case timeSensitive = 2
+    case critical = 3
+}
+
+// SKIP @bridge
 public struct UNNotificationPresentationOptions : OptionSet {
     // SKIP @bridge
     public let rawValue: Int
@@ -747,6 +910,12 @@ public class UNNotificationContent {
     public var summaryArgumentCount: Int
     // SKIP @bridge
     public var filterCriteria: String?
+    public var interruptionLevel: UNNotificationInterruptionLevel = .active
+    // SKIP @bridge
+    public var bridgedInterruptionLevel: Int {
+        get { interruptionLevel.rawValue }
+        set { interruptionLevel = UNNotificationInterruptionLevel(rawValue: newValue) ?? .active }
+    }
 
     public init(title: String = "", subtitle: String = "", body: String = "", badge: NSNumber? = nil, sound: UNNotificationSound? = UNNotificationSound.default, launchImageName: String = "", userInfo: [AnyHashable: Any] = [:], attachments: [UNNotificationAttachment] = [], categoryIdentifier: String = "", threadIdentifier: String = "", targetContentIdentifier: String? = nil, summaryArgument: String = "", summaryArgumentCount: Int = 0, filterCriteria: String? = nil) {
         self.title = title
@@ -882,11 +1051,6 @@ public let UNNotificationAttachmentOptionsTypeHintKey = "UNNotificationAttachmen
 public let UNNotificationAttachmentOptionsThumbnailHiddenKey = "UNNotificationAttachmentOptionsThumbnailHiddenKey"
 public let UNNotificationAttachmentOptionsThumbnailClippingRectKey = "UNNotificationAttachmentOptionsThumbnailClippingRectKey"
 public let UNNotificationAttachmentOptionsThumbnailTimeKey = "UNNotificationAttachmentOptionsThumbnailTimeKey"
-/// Android only: the title of a button that reveals a hidden image. Android expands the top notification on its own,
-/// where iOS shows a hidden image only on a long-press, so without it the image shows unasked.
-public let UNNotificationAttachmentOptionsRevealActionTitleKey = "UNNotificationAttachmentOptionsRevealActionTitleKey"
-/// Android only: the title of the button that hides a revealed image again. Without it, the image stays revealed.
-public let UNNotificationAttachmentOptionsConcealActionTitleKey = "UNNotificationAttachmentOptionsConcealActionTitleKey"
 
 // SKIP @bridge
 public class UNNotificationAttachment {
@@ -901,26 +1065,18 @@ public class UNNotificationAttachment {
     /// `UNNotificationAttachmentOptionsThumbnailHiddenKey`: the image shows only in the expanded notification.
     // SKIP @bridge
     public let hidesThumbnail: Bool
-    /// `UNNotificationAttachmentOptionsRevealActionTitleKey`
-    // SKIP @bridge
-    public let revealActionTitle: String?
-    /// `UNNotificationAttachmentOptionsConcealActionTitleKey`
-    // SKIP @bridge
-    public let concealActionTitle: String?
 
     // SKIP @bridge
-    public init(identifier: String, url: URL, type: String = "public.data", timeShift: TimeInterval = 0, hidesThumbnail: Bool = false, revealActionTitle: String? = nil, concealActionTitle: String? = nil) {
+    public init(identifier: String, url: URL, type: String = "public.data", timeShift: TimeInterval = 0, hidesThumbnail: Bool = false) {
         self.identifier = identifier
         self.url = url
         self.type = type
         self.timeShift = timeShift
         self.hidesThumbnail = hidesThumbnail
-        self.revealActionTitle = revealActionTitle
-        self.concealActionTitle = concealActionTitle
     }
 
     public convenience init(identifier: String, url: URL, options: [AnyHashable: Any]? = nil) throws {
-        self.init(identifier: identifier, url: url, type: UNNotificationAttachment.type(of: url, hint: UNNotificationAttachment.typeHint(options)), hidesThumbnail: UNNotificationAttachment.hidesThumbnail(options), revealActionTitle: UNNotificationAttachment.revealActionTitle(options), concealActionTitle: UNNotificationAttachment.concealActionTitle(options))
+        self.init(identifier: identifier, url: url, type: UNNotificationAttachment.type(of: url, hint: UNNotificationAttachment.typeHint(options)), hidesThumbnail: UNNotificationAttachment.hidesThumbnail(options))
     }
 
     // Kotlin's delegating constructor call can't read the option key globals itself.
@@ -930,14 +1086,6 @@ public class UNNotificationAttachment {
 
     private static func hidesThumbnail(_ options: [AnyHashable: Any]?) -> Bool {
         return options?[UNNotificationAttachmentOptionsThumbnailHiddenKey] as? Bool ?? false
-    }
-
-    private static func revealActionTitle(_ options: [AnyHashable: Any]?) -> String? {
-        return options?[UNNotificationAttachmentOptionsRevealActionTitleKey] as? String
-    }
-
-    private static func concealActionTitle(_ options: [AnyHashable: Any]?) -> String? {
-        return options?[UNNotificationAttachmentOptionsConcealActionTitleKey] as? String
     }
 
     public static func attachment(withIdentifier identifier: String, url: URL, options: [AnyHashable: Any]? = nil) throws -> UNNotificationAttachment {
@@ -1175,16 +1323,14 @@ public class NotificationWorker : Worker {
     static let largeIconKey = "image_url"
     /// The URL of the image drawn in the expanded notification.
     static let bigPictureKey = "big_picture_url"
-    /// The title of the button revealing the expanded picture, which is not drawn until then.
-    static let revealActionTitleKey = "skip.ui.UNNotification.revealActionTitle"
-    /// The title of the button hiding it again.
-    static let concealActionTitleKey = "skip.ui.UNNotification.concealActionTitle"
-    /// Whether the expanded picture is revealed: set by the buttons, which post the notification again.
-    static let revealedKey = "skip.ui.UNNotification.revealed"
-    /// When the notification was first posted, kept by the buttons' posts so it doesn't move up the shade.
-    static let postedMillisKey = "skip.ui.UNNotification.postedMillis"
+    /// The request's `categoryIdentifier`, whose actions become the notification's buttons.
+    static let categoryKey = "skip.ui.UNNotificationContent.categoryIdentifier"
+    /// The request's `interruptionLevel` raw value.
+    static let interruptionLevelKey = "skip.ui.UNNotificationContent.interruptionLevel"
+    /// The extra that carries the identifier of the action a button stands for.
+    static let actionIdentifierKey = "skip.ui.UNNotificationResponse.actionIdentifier"
     /// The keys that describe the notification itself, which its tap's intent does not carry.
-    static let notificationKeys: Set<String> = ["title", "body", "id", largeIconKey, bigPictureKey, revealActionTitleKey, concealActionTitleKey, revealedKey, postedMillisKey]
+    static let notificationKeys: Set<String> = ["title", "body", "id", largeIconKey, bigPictureKey, categoryKey, interruptionLevelKey]
 
     public init(context: Context, params: WorkerParameters) {
         super.init(context, params)
@@ -1201,7 +1347,7 @@ public class NotificationWorker : Worker {
         let id = inputData.getInt("id", 0)
         let title = inputData.getString("title") ?? ""
         let body = inputData.getString("body") ?? ""
-        let postedMillis = inputData.getLong(postedMillisKey, System.currentTimeMillis())
+        let postedMillis = System.currentTimeMillis()
 
         let intent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName())
         // SINGLE_TOP hands a running activity the tap as a new intent, where CLEAR_TOP alone would recreate it.
@@ -1249,19 +1395,18 @@ public class NotificationWorker : Worker {
         }
 
         // The small icon is a status bar glyph, drawn from its alpha alone, so an attachment is the large icon instead.
-        let revealActionTitle = inputData.getString(revealActionTitleKey)
-        let revealed = inputData.getBoolean(revealedKey, false)
-        let picture = revealActionTitle == nil || revealed ? bitmap(at: inputData.getString(bigPictureKey), context: context) : nil
-        // Revealed, the picture is the collapsed thumbnail too.
-        let largeIcon = (revealed ? picture : nil) ?? bitmap(at: inputData.getString(largeIconKey), context: context)
+        let largeIcon = bitmap(at: inputData.getString(largeIconKey), context: context)
         if let largeIcon {
             builder.setLargeIcon(largeIcon)
         }
-        if let revealActionTitle, inputData.getString(bigPictureKey) != nil {
-            // A button press posts again: only the first post alerts.
-            builder.setOnlyAlertOnce(true)
-            if let title = revealed ? inputData.getString(concealActionTitleKey) : revealActionTitle {
-                addRevealAction(to: builder, title: title, id: id, inputData: inputData, revealed: revealed, postedMillis: postedMillis, context: context)
+        let picture = bitmap(at: inputData.getString(bigPictureKey), context: context)
+        if inputData.getInt(interruptionLevelKey, UNNotificationInterruptionLevel.active.rawValue) == UNNotificationInterruptionLevel.passive.rawValue {
+            builder.setSilent(true)
+        }
+        if let categoryIdentifier = inputData.getString(categoryKey), !categoryIdentifier.isEmpty,
+           let category = UNUserNotificationCenter.loadCategories(context: context).first(where: { $0.identifier == categoryIdentifier }) {
+            for action in category.actions {
+                addAction(action, to: builder, id: id, inputData: inputData, launchIntent: intent, postedMillis: postedMillis, context: context)
             }
         }
         if let picture {
@@ -1297,21 +1442,51 @@ public class NotificationWorker : Worker {
         notificationManager.notify(id, builder.build())
     }
 
-    /// Adds the button that posts the notification again with its picture revealed or hidden, without opening the app.
-    private static func addRevealAction(to builder: NotificationCompat.Builder, title: String, id: Int, inputData: Data, revealed: Bool, postedMillis: Long, context: Context) {
-        let data = Data.Builder()
-            .putAll(inputData)
-            .putBoolean(revealedKey, !revealed)
-            .putLong(postedMillisKey, postedMillis)
+    /// Adds the button for `action`. A `.foreground` one opens the app as a tap does; any other reaches
+    /// `NotificationActionReceiver`, which hands the response to the delegate without opening the app, as iOS does.
+    private static func addAction(_ action: UNNotificationAction, to builder: NotificationCompat.Builder, id: Int, inputData: Data, launchIntent: Intent?, postedMillis: Long, context: Context) {
+        let pendingIntent: PendingIntent
+        if action.options.contains(.foreground) {
+            guard let launchIntent else {
+                return
+            }
+            // The action makes each button's intent distinct from the tap's and the other buttons'.
+            let intent = Intent(launchIntent)
+                .setAction(actionIntentPrefix + action.identifier)
+                .putExtra(actionIdentifierKey, action.identifier)
+            pendingIntent = PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)
+        } else {
+            let intent = Intent(context, NotificationActionReceiver.self.java)
+                .setAction(actionIntentPrefix + action.identifier)
+                .putExtra(NotificationActionReceiver.dataKey, inputData.toByteArray())
+                .putExtra(actionIdentifierKey, action.identifier)
+                .putExtra(dateKey, postedMillis)
+            pendingIntent = PendingIntent.getBroadcast(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)
+        }
+        let button = NotificationCompat.Action.Builder(nil as IconCompat?, action.title, pendingIntent)
+            .setAuthenticationRequired(action.options.contains(.authenticationRequired))
             .build()
-        let intent = Intent(context, NotificationActionReceiver.self.java)
-            .putExtra(NotificationActionReceiver.dataKey, data.toByteArray())
-        let pendingIntent = PendingIntent.getBroadcast(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)
-        let action = NotificationCompat.Action.Builder(nil as IconCompat?, title, pendingIntent)
-            // Revealing from the lock screen asks for the device to be unlocked first.
-            .setAuthenticationRequired(!revealed)
-            .build()
-        builder.addAction(action)
+        builder.addAction(button)
+    }
+
+    private static let actionIntentPrefix = "skip.ui.UNNotificationAction."
+
+    /// The response to the button for the action `actionIdentifier` on the notification `inputData` describes.
+    static func actionResponse(_ inputData: Data, actionIdentifier: String, postedMillis: Long) -> UNNotificationResponse {
+        let content = UNMutableNotificationContent()
+        content.title = inputData.getString("title") ?? ""
+        content.body = inputData.getString("body") ?? ""
+        content.categoryIdentifier = inputData.getString(categoryKey) ?? ""
+        var userInfo: [AnyHashable: Any] = [:]
+        for (key, value) in inputData.keyValueMap where !notificationKeys.contains(key) && key != identifierKey {
+            if let value {
+                userInfo[key] = value
+            }
+        }
+        content.userInfo = userInfo
+        let request = UNNotificationRequest(identifier: inputData.getString(identifierKey) ?? "", content: content, trigger: nil)
+        let date = Date(timeIntervalSince1970: Double(postedMillis) / 1000.0)
+        return UNNotificationResponse(actionIdentifier: actionIdentifier, notification: UNNotification(request: request, date: date))
     }
 
     /// Decodes the image at `urlString`, a file or content URL; nil when there is none or it can't be read.
@@ -1333,37 +1508,37 @@ public class NotificationWorker : Worker {
     }
 }
 
-/// Receives the presses on a notification's reveal button: posts the notification again from the data the button
-/// carries, with its picture revealed or hidden.
+/// Receives the presses on a notification's buttons that don't open the app, and hands their responses to the delegate.
 public class NotificationActionReceiver : BroadcastReceiver {
     /// The extra carrying the notification's serialized `Data`.
     static let dataKey = "skip.ui.UNNotification.data"
-    /// Where the post runs: decoding the picture is too slow for the main thread `onReceive` is called on.
-    static var executor: java.util.concurrent.Executor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     public override init() {
         super.init()
     }
 
     public override func onReceive(context: Context, intent: Intent) {
-        guard let bytes = intent.getByteArrayExtra(NotificationActionReceiver.dataKey) else {
+        guard let bytes = intent.getByteArrayExtra(NotificationActionReceiver.dataKey), let actionIdentifier = intent.getStringExtra(NotificationWorker.actionIdentifierKey) else {
             return
         }
-        let result = goAsync()
-        NotificationActionReceiver.executor.execute {
-            defer { result.finish() }
-            do {
-                let data = Data.fromByteArray(bytes)
-                // Before Android 12 the button can't ask for an unlock, so it reveals nothing on the lock screen.
-                let keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as! android.app.KeyguardManager
-                if data.getBoolean(NotificationWorker.revealedKey, false) && Build.VERSION.SDK_INT < Build.VERSION_CODES.S && keyguard.isKeyguardLocked() {
-                    return
-                }
-                NotificationWorker.post(data, context: context)
-            } catch {
-                logger.warning("could not post a notification again from its button: \(error)")
-            }
+        let data = Data.fromByteArray(bytes)
+        // Before Android 12 a button can't ask for an unlock, so one that requires it does nothing on the lock screen.
+        let keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as! android.app.KeyguardManager
+        if Build.VERSION.SDK_INT < Build.VERSION_CODES.S && keyguard.isKeyguardLocked() && requiresAuthentication(actionIdentifier, data: data, context: context) {
+            return
         }
+        let response = NotificationWorker.actionResponse(data, actionIdentifier: actionIdentifier, postedMillis: intent.getLongExtra(NotificationWorker.dateKey, System.currentTimeMillis()))
+        let result = goAsync()
+        Task {
+            await UNUserNotificationCenter.current().receiveActionResponse(response)
+            result.finish()
+        }
+    }
+
+    private func requiresAuthentication(_ actionIdentifier: String, data: Data, context: Context) -> Bool {
+        let categoryIdentifier = data.getString(NotificationWorker.categoryKey)
+        let category = UNUserNotificationCenter.loadCategories(context: context).first(where: { $0.identifier == categoryIdentifier })
+        return category?.actions.first(where: { $0.identifier == actionIdentifier })?.options.contains(.authenticationRequired) ?? true
     }
 }
 #endif
