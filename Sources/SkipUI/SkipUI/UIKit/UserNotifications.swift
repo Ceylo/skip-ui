@@ -127,15 +127,21 @@ public final class UNUserNotificationCenter {
         // A visible image is the thumbnail beside the text, and a hidden one shows only when expanded:
         // a small image such as an avatar must not be blown up into the expanded picture.
         let images = request.content.attachments.filter { $0.type == "public.image" }
-        let storedAttachments = UNUserNotificationCenter.attachmentStore(id: request.identifier.hashValue, context: context)
-        if let thumbnail = images.first(where: { !$0.hidesThumbnail }) {
-            dataBuilder.putString(NotificationWorker.largeIconKey, UNUserNotificationCenter.store(thumbnail.url, as: "large_icon", in: storedAttachments).absoluteString)
-        }
-        if let picture = images.first(where: { $0.hidesThumbnail }) {
-            dataBuilder.putString(NotificationWorker.bigPictureKey, UNUserNotificationCenter.store(picture.url, as: "big_picture", in: storedAttachments).absoluteString)
-            if let revealTitle = picture.revealActionTitle {
-                dataBuilder.putString(NotificationWorker.revealActionTitleKey, revealTitle)
-                dataBuilder.putString(NotificationWorker.concealActionTitleKey, picture.concealActionTitle)
+        if !images.isEmpty {
+            pruneAttachmentStores(context: context)
+            let storedAttachments = UNUserNotificationCenter.freshAttachmentStore(id: request.identifier.hashValue, context: context)
+            let thumbnail = images.first(where: { !$0.hidesThumbnail })
+            let thumbnailCopy = thumbnail.map { UNUserNotificationCenter.store($0.url, as: "large_icon", in: storedAttachments) }
+            if let thumbnailCopy {
+                dataBuilder.putString(NotificationWorker.largeIconKey, thumbnailCopy.absoluteString)
+            }
+            if let picture = images.first(where: { $0.hidesThumbnail }) {
+                let pictureCopy = picture.url == thumbnail?.url ? thumbnailCopy! : UNUserNotificationCenter.store(picture.url, as: "big_picture", in: storedAttachments)
+                dataBuilder.putString(NotificationWorker.bigPictureKey, pictureCopy.absoluteString)
+                if let revealTitle = picture.revealActionTitle {
+                    dataBuilder.putString(NotificationWorker.revealActionTitleKey, revealTitle)
+                    dataBuilder.putString(NotificationWorker.concealActionTitleKey, picture.concealActionTitle)
+                }
             }
         }
 
@@ -166,7 +172,6 @@ public final class UNUserNotificationCenter {
 
         // SKIP NOWARN
         await UNUserNotificationCenter.cancelWorkOfEarlierVersions(identifiers: [request.identifier], workManager: WorkManager.getInstance(context))
-        pruneAttachmentStores(context: context)
         #endif
     }
 
@@ -295,7 +300,7 @@ public final class UNUserNotificationCenter {
     /// The directory holding copies of the attachments of the notification with `id`, emptied first. iOS moves an
     /// attachment's file into its own store when the request is added; the copy keeps the image for as long as the
     /// notification can show it, as its owner may delete the original.
-    static func attachmentStore(id: Int, context: Context) -> java.io.File {
+    static func freshAttachmentStore(id: Int, context: Context) -> java.io.File {
         let directory = java.io.File(attachmentStoresDirectory(context), String(describing: id))
         directory.deleteRecursively()
         directory.mkdirs()
@@ -318,17 +323,25 @@ public final class UNUserNotificationCenter {
         }
     }
 
-    /// Deletes the attachment copies of notifications that are neither showing nor waiting to be posted. A notification
-    /// joins the active ones some time after it's posted, so recent copies are kept too.
+    private static let attachmentStoreGraceMillis: Long = 10 * 60 * 1000
+    private static var lastAttachmentPruneMillis: Long = 0
+
+    /// Deletes the attachment copies of notifications that are neither showing nor waiting to be posted, at most once per
+    /// grace period. A notification joins the active ones some time after it's posted, so recent copies are kept too.
     private func pruneAttachmentStores(context: Context) {
+        let now = System.currentTimeMillis()
+        guard now - UNUserNotificationCenter.lastAttachmentPruneMillis >= UNUserNotificationCenter.attachmentStoreGraceMillis else {
+            return
+        }
+        UNUserNotificationCenter.lastAttachmentPruneMillis = now
+        let recent = now - UNUserNotificationCenter.attachmentStoreGraceMillis
         let notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
-        let recent = System.currentTimeMillis() - 10 * 60 * 1000
         var kept = Set<String>()
         for notification in notificationManager.getActiveNotifications() {
             kept.insert(String(describing: notification.getId()))
         }
-        for request in getPendingNotificationRequests() {
-            kept.insert(String(describing: (request as! UNNotificationRequest).identifier.hashValue))
+        for request in getAllNotificationRequests() where request.timestamp > now {
+            kept.insert(String(describing: request.id.hashValue))
         }
         let directories = UNUserNotificationCenter.attachmentStoresDirectory(context).listFiles()
         for index in 0..<(directories?.size ?? 0) {
@@ -1231,7 +1244,11 @@ public class NotificationWorker : Worker {
             builder.setLargeIcon(largeIcon)
         }
         if let revealActionTitle, inputData.getString(bigPictureKey) != nil {
-            addRevealAction(to: builder, title: revealed ? inputData.getString(concealActionTitleKey) : revealActionTitle, inputData: inputData, revealed: revealed, postedMillis: postedMillis, context: context)
+            // A button press posts again: only the first post alerts.
+            builder.setOnlyAlertOnce(true)
+            if let title = revealed ? inputData.getString(concealActionTitleKey) : revealActionTitle {
+                addRevealAction(to: builder, title: title, id: id, inputData: inputData, revealed: revealed, postedMillis: postedMillis, context: context)
+            }
         }
         if let picture {
             let style = NotificationCompat.BigPictureStyle().bigPicture(picture)
@@ -1267,40 +1284,20 @@ public class NotificationWorker : Worker {
     }
 
     /// Adds the button that posts the notification again with its picture revealed or hidden, without opening the app.
-    private static func addRevealAction(to builder: NotificationCompat.Builder, title: String?, inputData: Data, revealed: Bool, postedMillis: Long, context: Context) {
-        // A button press posts again: only the first post alerts.
-        builder.setOnlyAlertOnce(true)
-        guard let title else {
-            return
-        }
-        let intent = actionIntent(inputData, revealing: !revealed, postedMillis: postedMillis, context: context)
-        let pendingIntent = PendingIntent.getBroadcast(context, inputData.getInt("id", 0), intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)
+    private static func addRevealAction(to builder: NotificationCompat.Builder, title: String, id: Int, inputData: Data, revealed: Bool, postedMillis: Long, context: Context) {
+        let data = Data.Builder()
+            .putAll(inputData)
+            .putBoolean(revealedKey, !revealed)
+            .putLong(postedMillisKey, postedMillis)
+            .build()
+        let intent = Intent(context, NotificationActionReceiver.self.java)
+            .putExtra(NotificationActionReceiver.dataKey, data.toByteArray())
+        let pendingIntent = PendingIntent.getBroadcast(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)
         let action = NotificationCompat.Action.Builder(nil as IconCompat?, title, pendingIntent)
             // Revealing from the lock screen asks for the device to be unlocked first.
             .setAuthenticationRequired(!revealed)
             .build()
         builder.addAction(action)
-    }
-
-    /// The intent of the button posting the notification `inputData` describes again, with its picture revealed or not.
-    static func actionIntent(_ inputData: Data, revealing: Bool, postedMillis: Long, context: Context) -> Intent {
-        let intent = Intent(context, NotificationActionReceiver.self.java)
-        for (key, value) in inputData.keyValueMap {
-            if let s = value as? String {
-                intent.putExtra(key, s)
-            } else if let b = value as? Bool {
-                intent.putExtra(key, b)
-            } else if let i = value as? Int {
-                intent.putExtra(key, i)
-            } else if let l = value as? Long {
-                intent.putExtra(key, l)
-            } else if let d = value as? Double {
-                intent.putExtra(key, d)
-            }
-        }
-        intent.putExtra(revealedKey, revealing)
-        intent.putExtra(postedMillisKey, postedMillis)
-        return intent
     }
 
     /// Decodes the image at `urlString`, a file or content URL; nil when there is none or it can't be read.
@@ -1325,19 +1322,24 @@ public class NotificationWorker : Worker {
 /// Receives the presses on a notification's reveal button: posts the notification again from the data the button
 /// carries, with its picture revealed or hidden.
 public class NotificationActionReceiver : BroadcastReceiver {
+    /// The extra carrying the notification's serialized `Data`.
+    static let dataKey = "skip.ui.UNNotification.data"
+    /// Where the post runs: decoding the picture is too slow for the main thread `onReceive` is called on.
+    static var executor: java.util.concurrent.Executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
     public override init() {
         super.init()
     }
 
     public override func onReceive(context: Context, intent: Intent) {
-        guard let extras = intent.getExtras() else {
+        guard let bytes = intent.getByteArrayExtra(NotificationActionReceiver.dataKey) else {
             return
         }
-        let data = java.util.HashMap<String, Any?>()
-        for key in extras.keySet() {
-            data.put(key, extras.get(key))
+        let result = goAsync()
+        NotificationActionReceiver.executor.execute {
+            NotificationWorker.post(Data.fromByteArray(bytes), context: context)
+            result.finish()
         }
-        NotificationWorker.post(Data.Builder().putAll(data).build(), context: context)
     }
 }
 #endif

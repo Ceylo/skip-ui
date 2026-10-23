@@ -175,6 +175,7 @@ final class NotificationRequestTests: SkipUITestCase {
         throw XCTSkip("Notification requests are WorkManager work on Android")
         #else
         _ = workManager()
+        NotificationActionReceiver.executor = DirectExecutor()
         let blurred = imageFile("blurred.png")
         let clear = imageFile("clear.png")
         let data = Data.Builder()
@@ -208,14 +209,14 @@ final class NotificationRequestTests: SkipUITestCase {
         throw XCTSkip("Notification requests are WorkManager work on Android")
         #else
         let original = imageFile("original.png")
-        let store = UNUserNotificationCenter.attachmentStore(id: 46, context: context)
+        let store = UNUserNotificationCenter.freshAttachmentStore(id: 46, context: context)
         let copy = UNUserNotificationCenter.store(original, as: "big_picture", in: store)
         java.io.File(original.path).delete()
 
         XCTAssertNotEqual(copy, original)
         XCTAssertTrue(java.io.File(copy.path).exists())
         // A new request with the same identifier starts from an empty store.
-        _ = UNUserNotificationCenter.attachmentStore(id: 46, context: context)
+        _ = UNUserNotificationCenter.freshAttachmentStore(id: 46, context: context)
         XCTAssertFalse(java.io.File(copy.path).exists())
         #endif
     }
