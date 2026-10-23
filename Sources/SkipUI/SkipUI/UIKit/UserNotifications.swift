@@ -281,7 +281,7 @@ public final class UNUserNotificationCenter {
         setNotificationCategories(Set(bridgedCategories))
     }
 
-    public func getNotificationCategories() async -> Set<UNNotificationCategory> {
+    public func notificationCategories() async -> Set<UNNotificationCategory> {
         #if SKIP
         return Set(UNUserNotificationCenter.loadCategories(context: ProcessInfo.processInfo.androidContext))
         #else
@@ -291,7 +291,7 @@ public final class UNUserNotificationCenter {
 
     // SKIP @bridge
     public func bridgedNotificationCategories() async -> [UNNotificationCategory] {
-        return Array(await getNotificationCategories())
+        return Array(await notificationCategories())
     }
 
     #if SKIP
@@ -387,7 +387,8 @@ public final class UNUserNotificationCenter {
 
     static func saveCategories(_ categories: [UNNotificationCategory], context: Context) {
         let json = org.json.JSONArray()
-        for category in categories {
+        // Sorted, as a set's order changes from one process to the next.
+        for category in categories.sorted(by: { $0.identifier < $1.identifier }) {
             let actions = org.json.JSONArray()
             for action in category.actions {
                 actions.put(org.json.JSONObject().put("identifier", action.identifier).put("title", action.title).put("options", action.options.rawValue))
@@ -588,8 +589,14 @@ public final class UNUserNotificationCenter {
     /// delegate yet, the tap waits for one. Any other intent is ignored. Returns whether the
     /// intent was such a tap.
     @discardableResult func receiveResponse(from intent: Intent) -> Bool {
-        guard let response = UNUserNotificationCenter.response(from: intent, context: ProcessInfo.processInfo.androidContext) else {
+        let context = ProcessInfo.processInfo.androidContext
+        guard let response = UNUserNotificationCenter.response(from: intent, context: context) else {
             return false
+        }
+        if response.actionIdentifier != UNNotificationDefaultActionIdentifier {
+            // iOS removes a notification once one of its actions is chosen; a tap's is auto-cancelled.
+            let notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
+            notificationManager.cancel(response.notification.request.identifier.hashValue)
         }
         pendingResponse = response
         deliverPendingResponse()
@@ -1375,7 +1382,10 @@ public class NotificationWorker : Worker {
         let id = inputData.getInt("id", 0)
         let title = inputData.getString("title") ?? ""
         let body = inputData.getString("body") ?? ""
-        let postedMillis = System.currentTimeMillis()
+        let passive = inputData.getInt(interruptionLevelKey, UNNotificationInterruptionLevel.active.rawValue) == UNNotificationInterruptionLevel.passive.rawValue
+        // A passive request replacing a notification still showing keeps its place in the shade.
+        let replacedPostTime = passive ? postTimeOfActiveNotification(id: id, context: context) : nil
+        let postedMillis = replacedPostTime ?? System.currentTimeMillis()
 
         let intent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName())
         // SINGLE_TOP hands a running activity the tap as a new intent, where CLEAR_TOP alone would recreate it.
@@ -1431,7 +1441,10 @@ public class NotificationWorker : Worker {
         }
         let pictureURL = inputData.getString(bigPictureKey)
         let picture = pictureURL == inputData.getString(largeIconKey) ? largeIcon : bitmap(at: pictureURL, context: context)
-        if inputData.getInt(interruptionLevelKey, UNNotificationInterruptionLevel.active.rawValue) == UNNotificationInterruptionLevel.passive.rawValue {
+        if replacedPostTime != nil {
+            // setSilent would also move it to a group of its own.
+            builder.setOnlyAlertOnce(true)
+        } else if passive {
             builder.setSilent(true)
         }
         if let categoryIdentifier = inputData.getString(categoryKey), !categoryIdentifier.isEmpty,
@@ -1540,6 +1553,12 @@ public class NotificationWorker : Worker {
         return UNNotificationResponse(actionIdentifier: actionIdentifier, notification: UNNotification(request: request, date: date))
     }
 
+    /// When the notification with `id` was posted, if it is still showing.
+    private static func postTimeOfActiveNotification(id: Int, context: Context) -> Long? {
+        // SKIP REPLACE: return (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).activeNotifications.firstOrNull { it.id == id }?.notification?.`when`
+        return nil
+    }
+
     /// Decodes the image at `urlString`, a file or content URL; nil when there is none or it can't be read.
     private static func bitmap(at urlString: String?, context: Context) -> android.graphics.Bitmap? {
         guard let urlString else {
@@ -1567,17 +1586,28 @@ public class NotificationActionReceiver : BroadcastReceiver {
 
     public override func onReceive(context: Context, intent: Intent) {
         guard let bytes = intent.getByteArrayExtra(NotificationWorker.dataKey), let actionIdentifier = intent.getStringExtra(NotificationWorker.actionIdentifierKey) else {
+            logger.warning("ignoring a notification button without an action")
             return
         }
-        // Before Android 12 a button can't ask for an unlock, so one that requires it does nothing on the lock screen.
+        // Before Android 12 a button can't ask for an unlock, so one that requires it does nothing on a locked device.
         let keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as! android.app.KeyguardManager
-        if intent.getBooleanExtra(NotificationWorker.authenticationRequiredKey, true) && Build.VERSION.SDK_INT < Build.VERSION_CODES.S && keyguard.isKeyguardLocked() {
+        if intent.getBooleanExtra(NotificationWorker.authenticationRequiredKey, true) && Build.VERSION.SDK_INT < Build.VERSION_CODES.S && keyguard.isDeviceLocked() {
             return
         }
-        let response = NotificationWorker.response(to: Data.fromByteArray(bytes), actionIdentifier: actionIdentifier, postedMillis: intent.getLongExtra(NotificationWorker.dateKey, System.currentTimeMillis()))
+        let data = Data.fromByteArray(bytes)
+        let response = NotificationWorker.response(to: data, actionIdentifier: actionIdentifier, postedMillis: intent.getLongExtra(NotificationWorker.dateKey, System.currentTimeMillis()))
+        // Each post issues a new token, which tells whether the delegate posted the notification again.
+        let identifier = response.notification.request.identifier
+        let preferences = context.getSharedPreferences(UNUserNotificationCenter.preferencesName, Context.MODE_PRIVATE)
+        let token = preferences.getString(UNUserNotificationCenter.responseTokenKey(identifier), nil)
         let result = goAsync()
         Task {
             await UNUserNotificationCenter.current().receiveActionResponse(response)
+            // iOS removes a notification once one of its actions is chosen.
+            if actionIdentifier != UNNotificationDismissActionIdentifier && preferences.getString(UNUserNotificationCenter.responseTokenKey(identifier), nil) == token {
+                let notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
+                notificationManager.cancel(data.getInt("id", 0))
+            }
             result.finish()
         }
     }

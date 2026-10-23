@@ -201,6 +201,15 @@ final class NotificationRequestTests: SkipUITestCase {
         // NotificationCompat files a silent notification under its own group.
         XCTAssertEqual(try XCTUnwrap(activeNotification(id: 47)).getGroup(), "silent")
         XCTAssertNil(try XCTUnwrap(activeNotification(id: 48)).getGroup())
+
+        // Replacing one still showing, it keeps its time and group, and doesn't alert again.
+        let original = try XCTUnwrap(activeNotification(id: 48))
+        java.lang.Thread.sleep(Int64(20))
+        NotificationWorker.post(Data.Builder().putInt("id", 48).putInt(NotificationWorker.interruptionLevelKey, UNNotificationInterruptionLevel.passive.rawValue).build(), context: context)
+        let replaced = try XCTUnwrap(activeNotification(id: 48))
+        XCTAssertEqual(postedTime(replaced), postedTime(original))
+        XCTAssertNil(replaced.getGroup())
+        XCTAssertTrue((replaced.flags & android.app.Notification.FLAG_ONLY_ALERT_ONCE) != 0)
         #endif
     }
 
@@ -238,6 +247,12 @@ final class NotificationRequestTests: SkipUITestCase {
         XCTAssertEqual(response.notification.request.content.categoryIdentifier, "mature")
         XCTAssertEqual(response.notification.request.content.userInfo["link"] as? String, "https://example.com/view/1/")
         XCTAssertEqual(response.notification.request.content.userInfo.count, 1)
+        // As on iOS, the notification goes once the action is handled.
+        for _ in 0..<100 where activeNotification(id: 49) != nil {
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            java.lang.Thread.sleep(Int64(20))
+        }
+        XCTAssertNil(activeNotification(id: 49))
         #endif
     }
 
@@ -283,7 +298,7 @@ final class NotificationRequestTests: SkipUITestCase {
         throw XCTSkip("Notification requests are WorkManager work on Android")
         #else
         UNUserNotificationCenter.current().setNotificationCategories([UNNotificationCategory(identifier: "mature", actions: [UNNotificationAction(identifier: "show", title: "Show", options: [.authenticationRequired])], intentIdentifiers: ["INSendMessageIntent"], options: [.hiddenPreviewsShowTitle])])
-        let categories = await UNUserNotificationCenter.current().getNotificationCategories()
+        let categories = await UNUserNotificationCenter.current().notificationCategories()
         let category = try XCTUnwrap(categories.first)
         XCTAssertEqual(categories.count, 1)
         XCTAssertEqual(category.identifier, "mature")
@@ -311,6 +326,11 @@ final class NotificationRequestTests: SkipUITestCase {
     }
 
     #if SKIP
+    private func postedTime(_ notification: android.app.Notification) -> Int64 {
+        // SKIP REPLACE: return notification.`when`
+        return 0
+    }
+
     private func actionTitles(_ notification: android.app.Notification) -> String {
         // SKIP REPLACE: return notification.actions.orEmpty().joinToString { it.title.toString() }
         return ""
