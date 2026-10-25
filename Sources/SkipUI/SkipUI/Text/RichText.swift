@@ -266,41 +266,25 @@ extension RichText {
         )
     }
 
-    /// Rebuilds `parsed` with its first `count` U+FFFC placeholders — the marks
-    /// `fromHtml` leaves where it dropped an `<img>` — turned into inline-content slots.
+    /// `parsed` with its first `count` U+FFFC placeholders — the marks `fromHtml` leaves
+    /// where it dropped an `<img>` — turned into inline-content slots.
     ///
-    /// `append(text:start:end:)` carries the spans of the range with it, so everything
-    /// the parser resolved survives the rebuild.
+    /// The slots are annotated in place, as `appendInlineContent` would, rather than the
+    /// text being rebuilt around them: every range the copy cut would come back as
+    /// several, and Compose lays out each `ParagraphStyle` range as its own paragraph.
     static func splicingInlineContent(_ parsed: AnnotatedString, count: Int) -> AnnotatedString {
-        let builder = AnnotatedString.Builder()
-        var last = 0
+        let builder = AnnotatedString.Builder(parsed)
         var offset = 0
         var index = 0
         // Transpiled, this iterates UTF-16 code units, which is the unit Compose counts
         // its offsets in — so an emoji earlier in the text can't shift a placeholder.
         for character in parsed.text {
             if character == placeholderCharacter, index < count {
-                builder.append(parsed, last, offset)
-                // `append(text:start:end:)` clips every annotation to the range it copies,
-                // and the placeholder is appended separately — so an image inside an `<a>`
-                // would come back bare. FA puts an avatar and the name it belongs to in one
-                // anchor, of which only the name would then be tappable.
-                var pushed = 0
-                for link in parsed.getLinkAnnotations(offset, offset + 1) {
-                    builder.pushLink(link.item)
-                    pushed += 1
-                }
-                builder.appendInlineContent(inlineContentID(index), placeholder)
-                while pushed > 0 {
-                    builder.pop()
-                    pushed -= 1
-                }
+                builder.addStringAnnotation(inlineContentTag, inlineContentID(index), offset, offset + 1)
                 index += 1
-                last = offset + 1
             }
             offset += 1
         }
-        builder.append(parsed, last, parsed.length)
         return builder.toAnnotatedString()
     }
 
@@ -310,7 +294,7 @@ extension RichText {
 
     /// U+FFFC, the object-replacement character.
     private static let placeholderCharacter: Character = "\u{FFFC}"
-    private static let placeholder = "\u{FFFC}"
+    private static let inlineContentTag = "androidx.compose.foundation.text.inlineContent"
 }
 #endif
 #endif
