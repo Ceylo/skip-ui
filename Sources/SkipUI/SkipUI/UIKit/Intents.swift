@@ -193,12 +193,6 @@ public final class INInteraction {
     }
 
     // SKIP @bridge
-    public var bridgedDirection: Int {
-        get { direction.rawValue }
-        set { direction = INInteractionDirection(rawValue: newValue) ?? INInteractionDirection.unspecified }
-    }
-
-    // SKIP @bridge
     public func donate() async throws {
         #if SKIP
         (intent as? INSendMessageIntent)?.pushShortcut(context: ProcessInfo.processInfo.androidContext)
