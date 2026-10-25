@@ -128,12 +128,7 @@ public final class UNUserNotificationCenter {
             .putInt(NotificationWorker.interruptionLevelKey, request.content.interruptionLevel.rawValue)
         let messageIntent = request.content.messageIntent
         let sender = messageIntent?.sender
-        if let messageIntent, let sender {
-            dataBuilder.putString(NotificationWorker.senderNameKey, sender.displayName)
-            dataBuilder.putString(NotificationWorker.senderIdentifierKey, sender.customIdentifier)
-            dataBuilder.putString(NotificationWorker.senderImageKey, sender.image?.url.absoluteString)
-            dataBuilder.putString(NotificationWorker.conversationIdentifierKey, messageIntent.conversationIdentifier)
-        }
+        let senderImageURL = sender?.image?.url
 
         // A visible image is the thumbnail beside the text, and a hidden one shows only when expanded:
         // a small image such as an avatar must not be blown up into the expanded picture.
@@ -147,10 +142,19 @@ public final class UNUserNotificationCenter {
         let postsNow = nextDate == nil || nextDate!.currentTimeMillis - System.currentTimeMillis() <= UNUserNotificationCenter.immediateDelayMillis
 
         // A post now reads the files before returning; a later one reads copies, as iOS moves the files into its store.
+        // A conversation is read again later, by SystemUI and a response re-posting it, so it keeps copies too.
         var storedAttachments: java.io.File? = nil
-        if !images.isEmpty && (!postsNow || sender != nil) {
+        if (!images.isEmpty && (!postsNow || sender != nil)) || senderImageURL != nil {
             await pruneAttachmentStores(context: context)
             storedAttachments = UNUserNotificationCenter.newAttachmentStore(id: request.identifier.hashValue, context: context)
+        }
+        if let messageIntent, let sender {
+            dataBuilder.putString(NotificationWorker.senderNameKey, sender.displayName)
+            dataBuilder.putString(NotificationWorker.senderIdentifierKey, sender.customIdentifier)
+            if let senderImageURL {
+                dataBuilder.putString(NotificationWorker.senderImageKey, UNUserNotificationCenter.store(senderImageURL, as: "sender_image", in: storedAttachments).absoluteString)
+            }
+            dataBuilder.putString(NotificationWorker.conversationIdentifierKey, messageIntent.conversationIdentifier)
         }
         let thumbnailURL = thumbnail.map { UNUserNotificationCenter.store($0.url, as: "large_icon", in: storedAttachments) }
         if let thumbnail, let thumbnailURL {
