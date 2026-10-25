@@ -5,5 +5,11 @@
         <receiver
             android:name="skip.ui.NotificationActionReceiver"
             android:exported="false" />
+        <!-- The images of conversation notifications, which SystemUI reads. -->
+        <provider
+            android:name="skip.ui.NotificationAttachmentProvider"
+            android:authorities="${applicationId}.skipui.notifications"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

@@ -15,6 +15,7 @@ import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -125,7 +126,15 @@ public final class UNUserNotificationCenter {
             .putString(NotificationWorker.identifierKey, request.identifier)
             .putString(NotificationWorker.categoryKey, request.content.categoryIdentifier)
             .putInt(NotificationWorker.interruptionLevelKey, request.content.interruptionLevel.rawValue)
-        
+        let messageIntent = request.content.messageIntent
+        let sender = messageIntent?.sender
+        if let messageIntent, let sender {
+            dataBuilder.putString(NotificationWorker.senderNameKey, sender.displayName)
+            dataBuilder.putString(NotificationWorker.senderIdentifierKey, sender.customIdentifier)
+            dataBuilder.putString(NotificationWorker.senderImageKey, sender.image?.url.absoluteString)
+            dataBuilder.putString(NotificationWorker.conversationIdentifierKey, messageIntent.conversationIdentifier)
+        }
+
         // A visible image is the thumbnail beside the text, and a hidden one shows only when expanded:
         // a small image such as an avatar must not be blown up into the expanded picture.
         let images = request.content.attachments.filter { $0.type == "public.image" }
@@ -139,7 +148,7 @@ public final class UNUserNotificationCenter {
 
         // A post now reads the files before returning; a later one reads copies, as iOS moves the files into its store.
         var storedAttachments: java.io.File? = nil
-        if !images.isEmpty && !postsNow {
+        if !images.isEmpty && (!postsNow || sender != nil) {
             await pruneAttachmentStores(context: context)
             storedAttachments = UNUserNotificationCenter.newAttachmentStore(id: request.identifier.hashValue, context: context)
         }
@@ -329,7 +338,7 @@ public final class UNUserNotificationCenter {
         return directory
     }
 
-    private static func attachmentStoresDirectory(_ context: Context) -> java.io.File {
+    static func attachmentStoresDirectory(_ context: Context) -> java.io.File {
         return java.io.File(context.getNoBackupFilesDir(), "skip_usernotifications_attachments")
     }
 
@@ -962,10 +971,52 @@ public class UNNotificationContent {
         self.filterCriteria = filterCriteria
     }
 
+    var messageIntent: INSendMessageIntent?
+    // SKIP @bridge
+    public var bridgedMessageIntent: INSendMessageIntent? {
+        get { messageIntent }
+        set { messageIntent = newValue }
+    }
+
     // SKIP @bridge
     public static func bridgedContent(title: String, subtitle: String, body: String, badge: Int?, sound: UNNotificationSound?, launchImageName: String, userInfo: [AnyHashable: Any], attachments: [UNNotificationAttachment], categoryIdentifier: String, threadIdentifier: String, targetContentIdentifier: String?, summaryArgument: String, summaryArgumentCount: Int, filterCriteria: String?) -> UNNotificationContent {
         return UNNotificationContent(title: title, subtitle: subtitle, body: body, badge: badge == nil ? nil : NSNumber(value: Int32(badge!)), sound: sound, launchImageName: launchImageName, userInfo: userInfo, attachments: attachments, categoryIdentifier: categoryIdentifier, threadIdentifier: threadIdentifier, targetContentIdentifier: targetContentIdentifier, summaryArgument: summaryArgument, summaryArgumentCount: summaryArgumentCount, filterCriteria: filterCriteria)
     }
+
+    public func mutableCopy() -> Any {
+        let copy = UNMutableNotificationContent()
+        copy.title = title
+        copy.subtitle = subtitle
+        copy.body = body
+        copy.badge = badge
+        copy.sound = sound
+        copy.launchImageName = launchImageName
+        copy.userInfo = userInfo
+        copy.attachments = attachments
+        copy.categoryIdentifier = categoryIdentifier
+        copy.threadIdentifier = threadIdentifier
+        copy.targetContentIdentifier = targetContentIdentifier
+        copy.summaryArgument = summaryArgument
+        copy.summaryArgumentCount = summaryArgumentCount
+        copy.filterCriteria = filterCriteria
+        copy.interruptionLevel = interruptionLevel
+        copy.messageIntent = messageIntent
+        return copy
+    }
+
+    public func updating(from provider: UNNotificationContentProviding) throws -> UNNotificationContent {
+        let copy = mutableCopy() as! UNMutableNotificationContent
+        if let intent = provider as? INSendMessageIntent {
+            copy.messageIntent = intent
+            if let sender = intent.sender {
+                copy.title = sender.displayName
+            }
+        }
+        return copy
+    }
+}
+
+public protocol UNNotificationContentProviding {
 }
 
 public final class UNMutableNotificationContent : UNNotificationContent {
@@ -1364,8 +1415,12 @@ public class NotificationWorker : Worker {
     static let authenticationRequiredKey = "skip.ui.UNNotificationAction.authenticationRequired"
     /// The extra that carries the notification's serialized `Data`, from which its response is built.
     static let dataKey = "skip.ui.UNNotification.data"
+    static let senderNameKey = "skip.ui.INPerson.displayName"
+    static let senderIdentifierKey = "skip.ui.INPerson.customIdentifier"
+    static let senderImageKey = "skip.ui.INPerson.image"
+    static let conversationIdentifierKey = "skip.ui.INSendMessageIntent.conversationIdentifier"
     /// The keys that describe the notification itself rather than its userInfo.
-    static let notificationKeys: Set<String> = ["title", "body", "id", identifierKey, largeIconKey, bigPictureKey, largeIconIdentifierKey, bigPictureIdentifierKey, categoryKey, interruptionLevelKey]
+    static let notificationKeys: Set<String> = ["title", "body", "id", identifierKey, largeIconKey, bigPictureKey, largeIconIdentifierKey, bigPictureIdentifierKey, categoryKey, interruptionLevelKey, senderNameKey, senderIdentifierKey, senderImageKey, conversationIdentifierKey]
 
     public init(context: Context, params: WorkerParameters) {
         super.init(context, params)
@@ -1384,8 +1439,8 @@ public class NotificationWorker : Worker {
         let body = inputData.getString("body") ?? ""
         let passive = inputData.getInt(interruptionLevelKey, UNNotificationInterruptionLevel.active.rawValue) == UNNotificationInterruptionLevel.passive.rawValue
         // A passive request replacing a notification still showing keeps its place in the shade.
-        let replacedPostTime = passive ? postTimeOfActiveNotification(id: id, context: context) : nil
-        let postedMillis = replacedPostTime ?? System.currentTimeMillis()
+        let replacedPostTime = postTimeOfActiveNotification(id: id, context: context)
+        let postedMillis = (passive ? replacedPostTime : nil) ?? System.currentTimeMillis()
 
         let intent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName())
         // SINGLE_TOP hands a running activity the tap as a new intent, where CLEAR_TOP alone would recreate it.
@@ -1434,17 +1489,38 @@ public class NotificationWorker : Worker {
             builder.setContentIntent(PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
         }
 
-        // The small icon is a status bar glyph, drawn from its alpha alone, so an attachment is the large icon instead.
-        let largeIcon = bitmap(at: inputData.getString(largeIconKey), context: context)
-        if let largeIcon {
-            builder.setLargeIcon(largeIcon)
+        let messageIntent = NotificationWorker.messageIntent(in: inputData)
+        var largeIcon: android.graphics.Bitmap? = nil
+        var picture: android.graphics.Bitmap? = nil
+        if let messageIntent, let sender = messageIntent.sender {
+            let me = Person.Builder().setName("Me").build()
+            let person = sender.androidPerson(context: context)
+            let style = NotificationCompat.MessagingStyle(me)
+            // An image message shows no text, so the body is its own message.
+            style.addMessage(NotificationCompat.MessagingStyle.Message(body, postedMillis, person))
+            if let imageURL = inputData.getString(largeIconKey), let uri = NotificationAttachmentProvider.uri(forFileURL: imageURL, context: context) {
+                style.addMessage(NotificationCompat.MessagingStyle.Message(body, postedMillis, person).setData("image/*", uri))
+            }
+            builder.setStyle(style)
+            if let shortcutIdentifier = messageIntent.shortcutIdentifier {
+                builder.setShortcutId(shortcutIdentifier)
+            }
+        } else {
+            // The small icon is a status bar glyph, drawn from its alpha alone, so an attachment is the large icon instead.
+            largeIcon = bitmap(at: inputData.getString(largeIconKey), context: context)
+            if let largeIcon {
+                builder.setLargeIcon(largeIcon)
+            }
+            let pictureURL = inputData.getString(bigPictureKey)
+            picture = pictureURL == inputData.getString(largeIconKey) ? largeIcon : bitmap(at: pictureURL, context: context)
         }
-        let pictureURL = inputData.getString(bigPictureKey)
-        let picture = pictureURL == inputData.getString(largeIconKey) ? largeIcon : bitmap(at: pictureURL, context: context)
-        if replacedPostTime != nil {
-            // setSilent would also move it to a group of its own.
+        // Only an active replacement alerts again. The flag on the replaced notification also keeps SystemUI from
+        // counting a passive update as an unread message.
+        if passive || replacedPostTime == nil {
             builder.setOnlyAlertOnce(true)
-        } else if passive {
+        }
+        // setSilent would also move a replacement to a group of its own.
+        if passive && replacedPostTime == nil {
             builder.setSilent(true)
         }
         if let categoryIdentifier = inputData.getString(categoryKey), !categoryIdentifier.isEmpty,
@@ -1541,6 +1617,7 @@ public class NotificationWorker : Worker {
             attachments.append(UNNotificationAttachment(identifier: inputData.getString(bigPictureIdentifierKey) ?? "", url: url, type: "public.image", hidesThumbnail: true))
         }
         content.attachments = attachments
+        content.messageIntent = messageIntent(in: inputData)
         var userInfo: [AnyHashable: Any] = [:]
         for (key, value) in inputData.keyValueMap where !notificationKeys.contains(key) {
             if let value {
@@ -1553,6 +1630,18 @@ public class NotificationWorker : Worker {
         return UNNotificationResponse(actionIdentifier: actionIdentifier, notification: UNNotification(request: request, date: date))
     }
 
+    static func messageIntent(in inputData: Data) -> INSendMessageIntent? {
+        guard let senderName = inputData.getString(senderNameKey) else {
+            return nil
+        }
+        var image: INImage? = nil
+        if let imageURLString = inputData.getString(senderImageKey), let imageURL = URL(string: imageURLString) {
+            image = INImage(url: imageURL)
+        }
+        let sender = INPerson(handleValue: nil, displayName: senderName, image: image, customIdentifier: inputData.getString(senderIdentifierKey), isMe: false)
+        return INSendMessageIntent(recipients: nil, content: inputData.getString("body"), conversationIdentifier: inputData.getString(conversationIdentifierKey), sender: sender)
+    }
+
     /// When the notification with `id` was posted, if it is still showing.
     private static func postTimeOfActiveNotification(id: Int, context: Context) -> Long? {
         // SKIP REPLACE: return (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).activeNotifications.firstOrNull { it.id == id }?.notification?.`when`
@@ -1560,7 +1649,7 @@ public class NotificationWorker : Worker {
     }
 
     /// Decodes the image at `urlString`, a file or content URL; nil when there is none or it can't be read.
-    private static func bitmap(at urlString: String?, context: Context) -> android.graphics.Bitmap? {
+    static func bitmap(at urlString: String?, context: Context) -> android.graphics.Bitmap? {
         guard let urlString else {
             return nil
         }
@@ -1575,6 +1664,66 @@ public class NotificationWorker : Worker {
             logger.warning("ignoring an unreadable notification attachment: \(error)")
             return nil
         }
+    }
+}
+
+public class NotificationAttachmentProvider : android.content.ContentProvider {
+    public override init() {
+        super.init()
+    }
+
+    static func uri(forFileURL fileURL: String, context: Context) -> android.net.Uri? {
+        guard let path = android.net.Uri.parse(fileURL).getPath(), let file = storedFile(java.io.File(path), context: context) else {
+            return nil
+        }
+        return android.net.Uri.Builder()
+            .scheme("content")
+            .authority(context.getPackageName() + ".skipui.notifications")
+            .path(String(file.getPath().dropFirst(storesRoot(context).getPath().count)))
+            .build()
+    }
+
+    private static func storesRoot(_ context: Context) -> java.io.File {
+        return UNUserNotificationCenter.attachmentStoresDirectory(context).getCanonicalFile()
+    }
+
+    private static func storedFile(_ file: java.io.File, context: Context) -> java.io.File? {
+        let resolved = file.getCanonicalFile()
+        guard resolved.getPath().hasPrefix(storesRoot(context).getPath() + "/"), resolved.isFile() else {
+            return nil
+        }
+        return resolved
+    }
+
+    public override func onCreate() -> Bool {
+        return true
+    }
+
+    public override func openFile(uri: android.net.Uri, mode: String) throws -> android.os.ParcelFileDescriptor? {
+        guard mode == "r", let context = getContext(), let file = NotificationAttachmentProvider.storedFile(java.io.File(NotificationAttachmentProvider.storesRoot(context), uri.getPath() ?? ""), context: context) else {
+            throw java.io.FileNotFoundException(uri.toString())
+        }
+        return android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+    }
+
+    public override func getType(uri: android.net.Uri) -> String? {
+        return "image/*"
+    }
+
+    public override func query(uri: android.net.Uri, projection: kotlin.Array<String>?, selection: String?, selectionArgs: kotlin.Array<String>?, sortOrder: String?) -> android.database.Cursor? {
+        return nil
+    }
+
+    public override func insert(uri: android.net.Uri, values: android.content.ContentValues?) -> android.net.Uri? {
+        return nil
+    }
+
+    public override func update(uri: android.net.Uri, values: android.content.ContentValues?, selection: String?, selectionArgs: kotlin.Array<String>?) -> Int {
+        return 0
+    }
+
+    public override func delete(uri: android.net.Uri, selection: String?, selectionArgs: kotlin.Array<String>?) -> Int {
+        return 0
     }
 }
 
