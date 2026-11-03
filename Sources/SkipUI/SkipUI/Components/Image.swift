@@ -718,11 +718,13 @@ public struct Image : View, Renderable, Equatable {
         case "camera.viewfinder": return "Icons.Outlined.QrCodeScanner"
         case "arrow.clockwise.circle": return "Icons.Outlined.Refresh" //􀚁
         case "arrow.clockwise": return "Icons.Outlined.Refresh" //􀅈
+        case "minus.circle": return "Icons.Outlined.RemoveCircleOutline"
         case "square.and.arrow.down": return "Icons.Outlined.SaveAlt" //􀈄
         case "magnifyingglass": return "Icons.Outlined.Search" //􀊫
         case "paperplane": return "Icons.Outlined.Send" //􀈟
         case "gearshape": return "Icons.Outlined.Settings" //􀣋
         case "square.and.arrow.up": return "Icons.Outlined.Share" //􀈂
+        case "tag": return "Icons.Outlined.Sell"
         case "cart": return "Icons.Outlined.ShoppingCart" //􀍩
         case "ellipsis.bubble": return "Icons.Outlined.Sms" //􀕺
         // #148 Icons.Outlined.Star is not actually outlined!
@@ -736,6 +738,7 @@ public struct Image : View, Renderable, Equatable {
         case "bookmark.fill": return "Icons.Filled.Bookmark" //􀉟
         case "wrench.fill": return "Icons.Filled.Build" //􀎖
         case "phone.fill": return "Icons.Filled.Call" //􀌿
+        case "xmark.circle.fill": return "Icons.Filled.Cancel"
         case "checkmark.circle.fill": return "Icons.Filled.CheckCircle" //􀁣
         case "trash.fill": return "Icons.Filled.Delete" //􀈒
         case "envelope.fill": return "Icons.Filled.Email" //􀍖
@@ -746,6 +749,7 @@ public struct Image : View, Renderable, Equatable {
         case "lock.fill": return "Icons.Filled.Lock" //􀎡
         case "message.badge.fill": return "Icons.Filled.MarkChatUnread"
         case "bell.fill": return "Icons.Filled.Notifications" //􀋚
+        case "person.2.fill": return "Icons.Filled.People"
         case "person.fill": return "Icons.Filled.Person" //􀉪
         case "mappin.circle.fill": return "Icons.Filled.Place" //􀜈
         case "play.fill": return "Icons.Filled.PlayArrow" //􀊄
@@ -824,10 +828,12 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Outlined.PlayArrow": return Icons.Outlined.PlayArrow
         case "Icons.Outlined.QrCodeScanner": return Icons.Outlined.QrCodeScanner
         case "Icons.Outlined.Refresh": return Icons.Outlined.Refresh
+        case "Icons.Outlined.RemoveCircleOutline": return Icons.Outlined.RemoveCircleOutline
         case "Icons.Outlined.Reply": return Icons.Outlined.Reply // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.Reply
         case "Icons.Outlined.SaveAlt": return Icons.Outlined.SaveAlt
         case "Icons.Outlined.Search": return Icons.Outlined.Search
         case "Icons.Outlined.Send": return Icons.Outlined.Send // Compose 1.6 TODO: Icons.AutoMirrored.Outlined.Send
+        case "Icons.Outlined.Sell": return Icons.Outlined.Sell
         case "Icons.Outlined.Settings": return Icons.Outlined.Settings
         case "Icons.Outlined.Share": return Icons.Outlined.Share
         case "Icons.Outlined.ShoppingCart": return Icons.Outlined.ShoppingCart
@@ -847,6 +853,7 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Filled.Bookmark": return Icons.Filled.Bookmark
         case "Icons.Filled.Build": return Icons.Filled.Build
         case "Icons.Filled.Call": return Icons.Filled.Call
+        case "Icons.Filled.Cancel": return Icons.Filled.Cancel
         case "Icons.Filled.CheckCircle": return Icons.Filled.CheckCircle
         case "Icons.Filled.Check": return Icons.Filled.Check
         case "Icons.Filled.Clear": return Icons.Filled.Clear
@@ -876,6 +883,7 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Filled.Menu": return Icons.Filled.Menu
         case "Icons.Filled.MoreVert": return Icons.Filled.MoreVert
         case "Icons.Filled.Notifications": return Icons.Filled.Notifications
+        case "Icons.Filled.People": return Icons.Filled.People
         case "Icons.Filled.Person": return Icons.Filled.Person
         case "Icons.Filled.Phone": return Icons.Filled.Phone
         case "Icons.Filled.Place": return Icons.Filled.Place
