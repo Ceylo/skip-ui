@@ -192,7 +192,7 @@ final class ImageTests: XCSnapshotTestCase {
         #if !SKIP
         throw XCTSkip("Symbol names are only mapped to Material icons on Android")
         #else
-        for name in ["folder", "person.2.fill", "tag", "minus.circle", "xmark.circle.fill"] {
+        for name in ["folder", "pause.fill", "person.2.fill", "tag", "minus.circle", "xmark.circle.fill"] {
             XCTAssertNotNil(Image.composeImageVector(named: name), name)
         }
         #endif

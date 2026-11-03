@@ -753,6 +753,7 @@ public struct Image : View, Renderable, Equatable {
         case "lock.fill": return "Icons.Filled.Lock" //􀎡
         case "message.badge.fill": return "Icons.Filled.MarkChatUnread"
         case "bell.fill": return "Icons.Filled.Notifications" //􀋚
+        case "pause.fill": return "Icons.Filled.Pause" //􀊆
         case "person.2.fill": return "Icons.Filled.People"
         case "person.fill": return "Icons.Filled.Person" //􀉪
         case "mappin.circle.fill": return "Icons.Filled.Place" //􀜈
@@ -887,6 +888,7 @@ public struct Image : View, Renderable, Equatable {
         case "Icons.Filled.Menu": return Icons.Filled.Menu
         case "Icons.Filled.MoreVert": return Icons.Filled.MoreVert
         case "Icons.Filled.Notifications": return Icons.Filled.Notifications
+        case "Icons.Filled.Pause": return Icons.Filled.Pause
         case "Icons.Filled.People": return Icons.Filled.People
         case "Icons.Filled.Person": return Icons.Filled.Person
         case "Icons.Filled.Phone": return Icons.Filled.Phone
