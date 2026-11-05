@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.__
 import androidx.compose.material.icons.sharp.__
 import androidx.compose.material.icons.twotone.__
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
@@ -263,7 +264,7 @@ public struct Image : View, Renderable, Equatable {
         let androidContext = LocalContext.current
 
         let shouldTint = (templateRenderingMode == .template) || (templateRenderingMode == nil && asset.isTemplateImage)
-        let tintColor = shouldTint ? EnvironmentValues.shared._foregroundStyle?.asColor(opacity: 1.0, animationContext: context) ?? Color.primary.colorImpl() : nil
+        let tintColor = shouldTint ? EnvironmentValues.shared._foregroundStyle?.asColor(opacity: 1.0, animationContext: context) ?? defaultTintColor() : nil
 
         if EnvironmentValues.shared._subcomposeAsyncImage {
             let dm = androidContext.resources.displayMetrics
@@ -508,7 +509,7 @@ public struct Image : View, Renderable, Equatable {
         case Font.Weight.black:      weightPriority = black + heavy + bold + semibold + medium + regular + light + thin + ultraLight
         }
 
-        let tintColor = EnvironmentValues.shared._foregroundStyle?.asColor(opacity: 1.0, animationContext: context) ?? Color.primary.colorImpl()
+        let tintColor = EnvironmentValues.shared._foregroundStyle?.asColor(opacity: 1.0, animationContext: context) ?? defaultTintColor()
 
         //logger.info("symbolInfos for name=\(name) against weightPriority=\(weightPriority): \(Array(symbolInfos.keys))")
         if let symbolInfo = weightPriority.compactMap({ symbolInfos[$0] }).first {
@@ -521,6 +522,10 @@ public struct Image : View, Renderable, Equatable {
         let imageBitmap = bitmap.asImageBitmap()
         let painter = BitmapPainter(imageBitmap)
         RenderPainter(painter: painter, scale: scale, aspectRatio: aspectRatio, contentMode: contentMode, context: context)
+    }
+
+    @Composable private func defaultTintColor() -> androidx.compose.ui.graphics.Color {
+        return EnvironmentValues.shared._placement.contains(ViewPlacement.systemTextColor) ? LocalContentColor.current : Color.primary.colorImpl()
     }
 
     @Composable private func RenderPainter(painter: Painter, scale: CGFloat = 1.0, tintColor: androidx.compose.ui.graphics.Color? = nil, aspectRatio: Double?, contentMode: ContentMode?, context: ComposeContext) {
@@ -614,7 +619,7 @@ public struct Image : View, Renderable, Equatable {
 
     @Composable private func RenderScaledImageVector(image: ImageVector, name: String, sizeRatio: Float = Float(1.0), aspectRatio: Double?, contentMode: ContentMode?, context: ComposeContext) {
 
-        let tintColor = EnvironmentValues.shared._foregroundStyle?.asColor(opacity: 1.0, animationContext: context) ?? Color.primary.colorImpl()
+        let tintColor = EnvironmentValues.shared._foregroundStyle?.asColor(opacity: 1.0, animationContext: context) ?? defaultTintColor()
         switch resizingMode {
         case .stretch:
             let painter = rememberVectorPainter(image)
