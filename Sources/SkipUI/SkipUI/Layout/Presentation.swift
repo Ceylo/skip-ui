@@ -130,9 +130,7 @@ final class PresentedContentHolder {
         let handleHeightPx = with(LocalDensity.current) { handleHeight.toPx() }
         let handlePadding = isFullScreen ? 0.dp : 10.dp
         let handlePaddingPx = with(LocalDensity.current) { handlePadding.toPx() }
-        // Like an iPhone sheet, span a phone held in landscape rather than Material's 640 dp cap.
-        let sheetMaxWidth = isFullScreen || EnvironmentValues.shared.verticalSizeClass == .compact
-            ? Dp.Unspecified : BottomSheetDefaults.SheetMaxWidth
+        let sheetMaxWidth = isFullScreen ? Dp.Unspecified : BottomSheetDefaults.SheetMaxWidth
         let shape = GenericShape { size, _ in
             // The modal content resolves window insets later in composition. Read here,
             // when constructing the outline, so clipping and content use the same inset.
