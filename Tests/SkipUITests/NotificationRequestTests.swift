@@ -191,6 +191,75 @@ final class NotificationRequestTests: SkipUITestCase {
         #endif
     }
 
+    func testThreadStacksUnderASilentSummary() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        _ = workManager()
+        NotificationWorker.post(threadData("stack.1", title: "First"), context: context)
+        NotificationWorker.post(threadData("stack.2", title: "Second"), context: context)
+
+        XCTAssertEqual(try XCTUnwrap(activeNotification(id: "stack.1".hashValue)).getGroup(), "thread")
+        let summary = try XCTUnwrap(activeNotification(id: NotificationWorker.summaryID(thread: "thread")))
+        XCTAssertEqual(summary.getGroup(), "thread")
+        XCTAssertTrue((summary.flags & android.app.Notification.FLAG_GROUP_SUMMARY) != 0)
+        XCTAssertFalse((summary.flags & android.app.Notification.FLAG_AUTO_CANCEL) != 0)
+        XCTAssertTrue((summary.flags & android.app.Notification.FLAG_ONLY_ALERT_ONCE) != 0)
+        XCTAssertEqual(summary.getGroupAlertBehavior(), android.app.Notification.GROUP_ALERT_CHILDREN)
+        XCTAssertEqual(summary.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString(), "Second")
+        XCTAssertNil(summary.getLargeIcon())
+        #endif
+    }
+
+    func testPassiveReplacementLeavesTheSummaryAlone() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        _ = workManager()
+        NotificationWorker.post(threadData("replace.1", title: "First"), context: context)
+        NotificationWorker.post(threadData("replace.2", title: "Second"), context: context)
+        NotificationWorker.post(threadData("replace.1", title: "Revealed", passive: true), context: context)
+        let summary = try XCTUnwrap(activeNotification(id: NotificationWorker.summaryID(thread: "thread")))
+        XCTAssertEqual(summary.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString(), "Second")
+        #endif
+    }
+
+    func testThreadSurvivesTheResponse() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        let response = NotificationWorker.response(to: threadData("respond.1", title: "First"), actionIdentifier: UNNotificationDefaultActionIdentifier, postedMillis: Int64(0))
+        XCTAssertEqual(response.notification.request.content.threadIdentifier, "thread")
+        XCTAssertEqual(response.notification.request.content.userInfo.count, 0)
+        #endif
+    }
+
+    func testSummaryGoesWithItsLastChild() throws {
+        #if !SKIP
+        throw XCTSkip("Notification requests are WorkManager work on Android")
+        #else
+        _ = workManager()
+        NotificationWorker.post(threadData("last.1", title: "First"), context: context)
+        NotificationWorker.post(threadData("last.2", title: "Second"), context: context)
+        let summaryID = NotificationWorker.summaryID(thread: "thread")
+
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["last.1"])
+        XCTAssertNil(activeNotification(id: "last.1".hashValue))
+        XCTAssertNotNil(activeNotification(id: summaryID))
+
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["last.2"])
+        XCTAssertNil(activeNotification(id: summaryID))
+
+        // A tap's notification is already auto-cancelled when its response arrives.
+        NotificationWorker.post(threadData("last.3", title: "Third"), context: context)
+        let manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! android.app.NotificationManager
+        manager.cancel("last.3".hashValue)
+        XCTAssertNotNil(activeNotification(id: summaryID))
+        NotificationWorker.cancel(ids: ["last.3".hashValue], context: context)
+        XCTAssertNil(activeNotification(id: summaryID))
+        #endif
+    }
+
     func testPassiveInterruptionLevelPostsSilently() throws {
         #if !SKIP
         throw XCTSkip("Notification requests are WorkManager work on Android")
@@ -326,6 +395,16 @@ final class NotificationRequestTests: SkipUITestCase {
     }
 
     #if SKIP
+    private func threadData(_ identifier: String, title: String, passive: Bool = false) -> Data {
+        return Data.Builder()
+            .putInt("id", identifier.hashValue)
+            .putString(NotificationWorker.identifierKey, identifier)
+            .putString("title", title)
+            .putString(NotificationWorker.threadIdentifierKey, "thread")
+            .putInt(NotificationWorker.interruptionLevelKey, (passive ? UNNotificationInterruptionLevel.passive : UNNotificationInterruptionLevel.active).rawValue)
+            .build()
+    }
+
     private func postedTime(_ notification: android.app.Notification) -> Int64 {
         // SKIP REPLACE: return notification.`when`
         return 0

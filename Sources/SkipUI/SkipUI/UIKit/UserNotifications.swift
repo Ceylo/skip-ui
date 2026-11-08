@@ -125,6 +125,7 @@ public final class UNUserNotificationCenter {
             .putInt("id", request.identifier.hashValue)
             .putString(NotificationWorker.identifierKey, request.identifier)
             .putString(NotificationWorker.categoryKey, request.content.categoryIdentifier)
+            .putString(NotificationWorker.threadIdentifierKey, request.content.threadIdentifier)
             .putInt(NotificationWorker.interruptionLevelKey, request.content.interruptionLevel.rawValue)
         let messageIntent = request.content.messageIntent
         let sender = messageIntent?.sender
@@ -247,21 +248,20 @@ public final class UNUserNotificationCenter {
         let editor = preferences.edit()
         let ids = HashSet<String>(preferences.getStringSet("ids", HashSet<String>()) ?? HashSet<String>())
         
-        // Get the notification manager.
-        let notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
-        
-        // Cancel all delivered notifications using the notification manager.
+        // Cancel all delivered notifications.
+        var delivered: [Int] = []
         let now = System.currentTimeMillis()
         for identifier in identifiers {
             // A removed notification's tap is no longer a response.
             editor.remove(UNUserNotificationCenter.responseTokenKey(identifier))
             let triggerTime = preferences.getLong("date_" + identifier, 0)
             if triggerTime < now {
-                notificationManager.cancel(identifier.hashValue)
+                delivered.append(identifier.hashValue)
                 ids.remove(identifier)
                 editor.remove("date_" + identifier)
             }
         }
+        NotificationWorker.cancel(ids: delivered, context: context)
         
         // Update the notification identifiers in the shared preferences.
         editor.putStringSet("ids", ids)
@@ -606,11 +606,8 @@ public final class UNUserNotificationCenter {
         guard let response = UNUserNotificationCenter.response(from: intent, context: context) else {
             return false
         }
-        if response.actionIdentifier != UNNotificationDefaultActionIdentifier {
-            // iOS removes a notification once one of its actions is chosen; a tap's is auto-cancelled.
-            let notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
-            notificationManager.cancel(response.notification.request.identifier.hashValue)
-        }
+        // iOS removes a notification once one of its actions is chosen; a tap's is auto-cancelled, but its summary may remain.
+        NotificationWorker.cancel(ids: [response.notification.request.identifier.hashValue], context: context)
         pendingResponse = response
         deliverPendingResponse()
         return true
@@ -1408,6 +1405,7 @@ public class NotificationWorker : Worker {
     static let bigPictureKey = "big_picture_url"
     /// The request's `categoryIdentifier`, whose actions become the notification's buttons.
     static let categoryKey = "skip.ui.UNNotificationContent.categoryIdentifier"
+    static let threadIdentifierKey = "skip.ui.UNNotificationContent.threadIdentifier"
     /// The request's `interruptionLevel` raw value.
     static let interruptionLevelKey = "skip.ui.UNNotificationContent.interruptionLevel"
     /// The identifiers of the attachments behind the large icon and the expanded picture.
@@ -1424,7 +1422,7 @@ public class NotificationWorker : Worker {
     static let senderImageKey = "skip.ui.INPerson.image"
     static let conversationIdentifierKey = "skip.ui.INSendMessageIntent.conversationIdentifier"
     /// The keys that describe the notification itself rather than its userInfo.
-    static let notificationKeys: Set<String> = ["title", "body", "id", identifierKey, largeIconKey, bigPictureKey, largeIconIdentifierKey, bigPictureIdentifierKey, categoryKey, interruptionLevelKey, senderNameKey, senderIdentifierKey, senderImageKey, conversationIdentifierKey]
+    static let notificationKeys: Set<String> = ["title", "body", "id", identifierKey, largeIconKey, bigPictureKey, largeIconIdentifierKey, bigPictureIdentifierKey, categoryKey, threadIdentifierKey, interruptionLevelKey, senderNameKey, senderIdentifierKey, senderImageKey, conversationIdentifierKey]
 
     public init(context: Context, params: WorkerParameters) {
         super.init(context, params)
@@ -1444,11 +1442,10 @@ public class NotificationWorker : Worker {
         let passive = inputData.getInt(interruptionLevelKey, UNNotificationInterruptionLevel.active.rawValue) == UNNotificationInterruptionLevel.passive.rawValue
         // A passive request replacing a notification still showing keeps its place in the shade.
         let replacedPostTime = postTimeOfActiveNotification(id: id, context: context)
-        let postedMillis = (passive ? replacedPostTime : nil) ?? System.currentTimeMillis()
+        let keptPostTime = passive ? replacedPostTime : nil
+        let postedMillis = keptPostTime ?? System.currentTimeMillis()
 
-        let intent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName())
-        // SINGLE_TOP hands a running activity the tap as a new intent, where CLEAR_TOP alone would recreate it.
-        intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        let intent = launchIntent(context: context)
         
         let bundle = android.os.Bundle()
         let allData = inputData.keyValueMap
@@ -1491,6 +1488,10 @@ public class NotificationWorker : Worker {
         // A package without a launcher activity has no intent, and updating its pending intent then throws.
         if let intent {
             builder.setContentIntent(PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
+        }
+        let threadIdentifier = inputData.getString(threadIdentifierKey) ?? ""
+        if !threadIdentifier.isEmpty {
+            builder.setGroup(threadIdentifier)
         }
 
         let messageIntent = NotificationWorker.messageIntent(in: inputData)
@@ -1546,6 +1547,61 @@ public class NotificationWorker : Worker {
             builder.setStyle(style)
         }
 
+        let icon = smallIcon(context: context)
+        builder.setSmallIcon(icon)
+
+        // Display the notification.
+        notificationManager.notify(id, builder.build())
+        // A passive replacement is no news for the summary to carry.
+        if !threadIdentifier.isEmpty && keptPostTime == nil {
+            postSummary(thread: threadIdentifier, title: title, body: body, postedMillis: postedMillis, channelID: channelID, icon: icon, notificationManager: notificationManager, context: context)
+        }
+    }
+
+    /// Not listed among the delivered notifications. No auto-cancel, so a tap on the collapsed stack can't clear it.
+    private static func postSummary(thread: String, title: String, body: String, postedMillis: Long, channelID: String, icon: IconCompat, notificationManager: NotificationManager, context: Context) {
+        let id = summaryID(thread: thread)
+        let builder = NotificationCompat.Builder(context, channelID)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setWhen(postedMillis)
+            .setGroup(thread)
+            .setGroupSummary(true)
+            .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+            .setOnlyAlertOnce(true)
+            .setSmallIcon(icon)
+        if let intent = launchIntent(context: context) {
+            builder.setContentIntent(PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
+        }
+        notificationManager.notify(id, builder.build())
+    }
+
+    static func summaryID(thread: String) -> Int {
+        return ("skip.ui.UNNotification.summary." + thread).hashValue
+    }
+
+    /// Cancels the notifications with `ids` and the summaries left without children, which SystemUI removes itself
+    /// at most after a swipe or a tap.
+    static func cancel(ids: [Int], context: Context) {
+        let notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
+        let (summaries, others) = notificationManager.activeNotifications.partition { ($0.notification.flags & android.app.Notification.FLAG_GROUP_SUMMARY) != 0 }
+        let remainingGroups = others.filter { !ids.contains($0.id) }.map { $0.notification.getGroup() }.toSet()
+        for id in ids {
+            notificationManager.cancel(id)
+        }
+        for summary in summaries where !remainingGroups.contains(summary.notification.getGroup()) {
+            notificationManager.cancel(summary.id)
+        }
+    }
+
+    private static func launchIntent(context: Context) -> Intent? {
+        let intent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName())
+        // SINGLE_TOP hands a running activity the tap as a new intent, where CLEAR_TOP alone would recreate it.
+        intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return intent
+    }
+
+    private static func smallIcon(context: Context) -> IconCompat {
         // Notification icon: must be a resource with transparent background and white logo
         // eg: to be used as a default icon must be added in the AndroidManifest.xml with the following code:
         // <meta-data
@@ -1561,13 +1617,9 @@ public class NotificationWorker : Worker {
         // framework id is not found in the app package. Load it from the android package.
         if resId == 0 {
             let androidContext = context.createPackageContext("android", 0)
-            builder.setSmallIcon(IconCompat.createWithResource(androidContext, android.R.drawable.stat_notify_chat))
-        } else {
-            builder.setSmallIcon(IconCompat.createWithResource(context, resId))
+            return IconCompat.createWithResource(androidContext, android.R.drawable.stat_notify_chat)
         }
-        
-        // Display the notification.
-        notificationManager.notify(id, builder.build())
+        return IconCompat.createWithResource(context, resId)
     }
 
     /// Adds the button for `action`. A `.foreground` one opens the app as a tap does; any other reaches
@@ -1612,6 +1664,7 @@ public class NotificationWorker : Worker {
         content.title = inputData.getString("title") ?? ""
         content.body = inputData.getString("body") ?? ""
         content.categoryIdentifier = inputData.getString(categoryKey) ?? ""
+        content.threadIdentifier = inputData.getString(threadIdentifierKey) ?? ""
         content.bridgedInterruptionLevel = inputData.getInt(interruptionLevelKey, UNNotificationInterruptionLevel.active.rawValue)
         var attachments: [UNNotificationAttachment] = []
         if let urlString = inputData.getString(largeIconKey), let url = URL(string: urlString) {
@@ -1758,8 +1811,7 @@ public class NotificationActionReceiver : BroadcastReceiver {
             await UNUserNotificationCenter.current().receiveActionResponse(response)
             // iOS removes a notification once one of its actions is chosen.
             if actionIdentifier != UNNotificationDismissActionIdentifier && preferences.getString(UNUserNotificationCenter.responseTokenKey(identifier), nil) == token {
-                let notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as! NotificationManager
-                notificationManager.cancel(data.getInt("id", 0))
+                NotificationWorker.cancel(ids: [data.getInt("id", 0)], context: context)
             }
             result.finish()
         }
