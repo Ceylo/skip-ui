@@ -1,5 +1,4 @@
 // Copyright 2023–2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 #if !SKIP_BRIDGE
 import Foundation
 #if SKIP
@@ -1877,8 +1876,8 @@ public struct NavigationLink : View, Renderable {
     @Composable override func Render(context: ComposeContext) {
         let isEnabled = (value != nil || destination != nil) && EnvironmentValues.shared.isEnabled
         // Nested in a list row rather than being the row: iOS still draws it as a row, untinted.
-        let buttonStyle = EnvironmentValues.shared._buttonStyle
-        if EnvironmentValues.shared._placement.contains(ViewPlacement.listItem) && (buttonStyle == nil || buttonStyle == .automatic) {
+        let buttonStyle = EnvironmentValues.shared._buttonStyle?.style
+        if EnvironmentValues.shared._placement.contains(ViewPlacement.listItem) && (buttonStyle == nil || buttonStyle is DefaultButtonStyle) {
             let action = navigationAction()
             ComposeContainer(modifier: context.modifier) { modifier in
                 Button.RenderTextButton(label: label, context: context.content(modifier: modifier), isPlain: true, isEnabled: isEnabled, action: action)
@@ -1889,8 +1888,7 @@ public struct NavigationLink : View, Renderable {
     }
 
     @Composable override func shouldRenderListItem(context: ComposeContext) -> (Bool, (() -> Void)?) {
-        let buttonStyle = EnvironmentValues.shared._buttonStyle
-        guard buttonStyle == nil || buttonStyle == .automatic || buttonStyle == .plain else {
+        guard Button.isListItemStyle(EnvironmentValues.shared._buttonStyle) else {
             return (false, nil)
         }
         let action: (() -> Void)? = value != nil || destination != nil ? navigationAction() : nil

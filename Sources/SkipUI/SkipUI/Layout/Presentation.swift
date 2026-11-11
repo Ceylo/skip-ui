@@ -1,5 +1,4 @@
 // Copyright 2023–2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 #if !SKIP_BRIDGE
 import Foundation
 #if SKIP
@@ -15,6 +14,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeightIn
@@ -40,12 +40,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -56,7 +58,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -111,20 +113,36 @@ final class PresentedContentHolder {
     } else if !sheetState.isVisible {
         presentedContent.view = nil
     }
-    let presentingFocusManager = LocalFocusManager.current
     let presentingKeyboardController = LocalSoftwareKeyboardController.current
+    let restoreKeyboard = remember { mutableStateOf(false) }
+    let keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    let windowFocused = LocalWindowInfo.current.isWindowFocused
+    let presentationVisible = isPresentedValue || sheetState.isVisible
+    LaunchedEffect(presentationVisible, windowFocused) {
+        if !presentationVisible && windowFocused && restoreKeyboard.value {
+            restoreKeyboard.value = false
+            presentingKeyboardController?.show()
+        }
+    }
     if isPresentedValue {
         LaunchedEffect(true) {
-            // Release the presenting field while the new window opens, without delaying presentation.
-            presentingFocusManager.clearFocus()
+            // Preserve the presenting field's focus and restore its keyboard after dismissal.
+            restoreKeyboard.value = keyboardVisible
             presentingKeyboardController?.hide()
         }
     }
-    if isPresentedValue || sheetState.isVisible {
+    if presentationVisible {
         // Don't fully evaluate content until we set up the presented environment. For now we just want
         // to get at the modifiers to look for `BackDismissDisabled`
         let contentRenderables = ComposeBuilder.from({ presentedContent.view ?? EmptyView() }).Evaluate(context: context, options: EvaluateOptions(isKeepNonModified: true).value)
         let topInset = remember { mutableStateOf(0.dp) }
+        // Preferences such as the detent are contributed by the presented content in a SideEffect, and the
+        // content is only rendered once the presentation has been laid out. Until then the detent falls
+        // back to `.large`, which would draw the sheet at nearly full height for several frames before
+        // it collapses to its real detent. Keep the sheet transparent until the content has rendered and
+        // contributed its preferences.
+        let isFirstPassComplete = remember { mutableStateOf(false) }
+        let sheetAlpha = (isFullScreen || isFirstPassComplete.value) ? Float(1.0) : Float(0.0)
         let density = LocalDensity.current
         let handleHeight = isFullScreen ? 0.dp : 8.dp
         let handleHeightPx = with(LocalDensity.current) { handleHeight.toPx() }
@@ -150,7 +168,7 @@ final class PresentedContentHolder {
             isPresented.set(false)
         }
         let properties = ModalBottomSheetProperties(shouldDismissOnBackPress: !backDismissDisabled)
-        ModalBottomSheet(onDismissRequest: onDismissRequest, sheetState: sheetState, sheetMaxWidth: sheetMaxWidth, sheetGesturesEnabled: !interactiveDismissDisabled, containerColor: presentationColor != nil ? androidx.compose.ui.graphics.Color.Transparent : androidx.compose.ui.graphics.Color.Unspecified, shape: shape, dragHandle: nil, contentWindowInsets: { WindowInsets(0.dp, 0.dp, 0.dp, 0.dp) }, properties: properties) {
+        ModalBottomSheet(onDismissRequest: onDismissRequest, modifier: Modifier.alpha(sheetAlpha), sheetState: sheetState, sheetMaxWidth: sheetMaxWidth, sheetGesturesEnabled: !interactiveDismissDisabled, containerColor: presentationColor != nil ? androidx.compose.ui.graphics.Color.Transparent : androidx.compose.ui.graphics.Color.Unspecified, shape: shape, dragHandle: nil, contentWindowInsets: { WindowInsets(0.dp, 0.dp, 0.dp, 0.dp) }, properties: properties) {
             
             SyncSystemBarsWithTheme()
             
@@ -240,6 +258,13 @@ final class PresentedContentHolder {
                                 renderable.Render(context: context)
                             }
                         }
+                    }
+                    // PresentationRoot only renders its content once the presentation has been laid out, so
+                    // the content - and the detent preference it contributes in a SideEffect - arrives
+                    // some frames after the sheet itself. This effect is positioned after the content's
+                    // effects, so the real detent and the reveal land in the same recomposition.
+                    SideEffect {
+                        isFirstPassComplete.value = true
                     }
                 }
             }

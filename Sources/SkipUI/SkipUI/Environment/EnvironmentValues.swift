@@ -1,5 +1,4 @@
 // Copyright 2023–2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 #if !SKIP_BRIDGE
 import Foundation
 #if canImport(Observation)
@@ -685,8 +684,8 @@ extension EnvironmentValues {
         set { setBuiltinValue(key: "_buttonBorderShape", value: newValue, defaultValue: { nil }) }
     }
 
-    var _buttonStyle: ButtonStyle? {
-        get { builtinValue(key: "_buttonStyle", defaultValue: { nil }) as! ButtonStyle? }
+    var _buttonStyle: StackedButtonStyle? {
+        get { builtinValue(key: "_buttonStyle", defaultValue: { nil }) as! StackedButtonStyle? }
         set { setBuiltinValue(key: "_buttonStyle", value: newValue, defaultValue: { nil }) }
     }
 
@@ -799,6 +798,11 @@ extension EnvironmentValues {
     var _contentMargins: ContentMargins? {
         get { builtinValue(key: "_contentMargins", defaultValue: { nil }) as! ContentMargins? }
         set { setBuiltinValue(key: "_contentMargins", value: newValue, defaultValue: { nil }) }
+    }
+
+    var _listSectionCornerRadius: CGFloat {
+        get { builtinValue(key: "_listSectionCornerRadius", defaultValue: { 8.0 }) as! CGFloat }
+        set { setBuiltinValue(key: "_listSectionCornerRadius", value: newValue, defaultValue: { 8.0 }) }
     }
 
     var _listRowSpacing: CGFloat? {

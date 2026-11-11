@@ -1,5 +1,4 @@
 // Copyright 2023–2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 #if SKIP
 import androidx.compose.ui.draw.DrawModifier
 import androidx.compose.ui.geometry.Rect
@@ -239,6 +238,14 @@ class OpacityModifier : DrawModifier {
 
     // SKIP DECLARE: override fun ContentDrawScope.draw()
     override func draw() {
+        // Invisible content does not need drawing; opaque content needs no extra layer.
+        if opacity == Float(0) {
+            return
+        }
+        if opacity == Float(1) {
+            drawContent()
+            return
+        }
         let paint = Paint().apply {
             alpha = opacity
         }

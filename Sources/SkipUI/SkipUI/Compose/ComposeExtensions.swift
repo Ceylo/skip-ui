@@ -1,5 +1,4 @@
 // Copyright 2023–2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 #if SKIP
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.layout.PaddingValues
@@ -208,12 +207,18 @@ extension Modifier {
                     return
                 }
                 var pressed = true
+                var hasDeterminedAxis = false
                 while pressed {
                     let event = awaitPointerEvent(pass: PointerEventPass.Initial)
                     if let change = event.changes.firstOrNull() {
                         pressed = change.pressed
-                        if abs(change.position.x - start.x) > slop || abs(change.position.y - start.y) > slop {
-                            isUserScrollActive.value = true
+                        if !hasDeterminedAxis {
+                            let dx = abs(change.position.x - start.x)
+                            let dy = abs(change.position.y - start.y)
+                            if dx > slop || dy > slop {
+                                hasDeterminedAxis = true
+                                isUserScrollActive.value = dy > dx
+                            }
                         }
                     } else {
                         pressed = false

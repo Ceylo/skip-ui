@@ -1,5 +1,4 @@
 // Copyright 2023–2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 import Foundation
 import Observation
 import OSLog
@@ -122,6 +121,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextInputSelection
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performGesture
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.up
 import androidx.compose.ui.text.AnnotatedString
@@ -256,6 +256,67 @@ final class SkipUITests: SkipUITestCase {
                 .accessibilityIdentifier("button")
                 .buttonStyle(.bordered) // Required to use Compose Button
             }
+        }
+    }
+
+    func testCustomButtonStyles() throws {
+        try testUI(view: {
+            CustomButtonStyleTestView().accessibilityIdentifier("test-view")
+        }, eval: { rule in
+            try check(rule, id: "label", hasText: "Counter: 0")
+            #if SKIP
+            // ButtonStyle: makeBody renders around the label and the tap fires the action
+            // The body's text is merged into the clickable button node, and the disabled button uses the same style
+            rule.onAllNodesWithTag("styled.body", useUnmergedTree: true)[0].assertIsDisplayed()
+            rule.onNodeWithTag("styled").performClick()
+            try check(rule, id: "label", hasText: "Counter: 1")
+
+            // PrimitiveButtonStyle whose Button(configuration) hands off to the outer .bordered style without recursing
+            rule.onNodeWithTag("primitive").performClick()
+            try check(rule, id: "label", hasText: "Counter: 11")
+
+            // Disabled custom-styled button doesn't fire
+            rule.onNodeWithTag("disabled").performClick()
+            try check(rule, id: "label", hasText: "Counter: 11")
+            #endif
+        })
+    }
+    struct CustomButtonStyleTestView: View {
+        @State var counter = 0
+        var body: some View {
+            VStack {
+                Text("Counter: \(counter)")
+                    .accessibilityIdentifier("label")
+                Button("Styled") { counter += 1 }
+                    .buttonStyle(TestButtonStyle())
+                    .accessibilityIdentifier("styled")
+                VStack {
+                    Button("Primitive") { counter += 10 }
+                        .buttonStyle(TestPrimitiveButtonStyle())
+                        .accessibilityIdentifier("primitive")
+                }
+                .buttonStyle(.bordered)
+                Button("Disabled") { counter += 100 }
+                    .buttonStyle(TestButtonStyle())
+                    .disabled(true)
+                    .accessibilityIdentifier("disabled")
+            }
+        }
+    }
+    struct TestButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            HStack {
+                configuration.label
+                Text(configuration.isPressed ? "pressed" : "idle")
+                    .accessibilityIdentifier("styled.body")
+            }
+            .padding()
+        }
+    }
+    struct TestPrimitiveButtonStyle: PrimitiveButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            Button(configuration)
+                .padding()
         }
     }
 
@@ -456,6 +517,30 @@ final class SkipUITests: SkipUITestCase {
                 }
             )
         }
+    }
+
+    func testRefreshableScrollViewTakesPullBelowShortContent() throws {
+        #if !SKIP
+        throw XCTSkip("Pull to refresh is a Compose behavior")
+        #else
+        let refreshCount = mutableStateOf(0)
+        try testUI(view: {
+            ScrollView {
+                Text("Short")
+                    .accessibilityIdentifier("refresh.content")
+            }
+            .refreshable { refreshCount.value += 1 }
+            .frame(height: 400)
+            .accessibilityIdentifier("refresh.container")
+        }, eval: { rule in
+            let container = rule.onNodeWithTag("refresh.container").fetchSemanticsNode().boundsInRoot
+            let content = rule.onNodeWithTag("refresh.content").fetchSemanticsNode().boundsInRoot
+            XCTAssertLessThan(content.bottom, container.top + container.height / 4, "The pull would start on the content")
+            rule.onNodeWithTag("refresh.container").performTouchInput { swipeDown(startY: centerY / 2, endY: bottom) }
+            rule.waitForIdle()
+            XCTAssertEqual(refreshCount.value, 1, "A pull starting below the content did not refresh")
+        })
+        #endif
     }
 
     func testConditionalTabDoesNotRenderBlankNavigationItem() throws {

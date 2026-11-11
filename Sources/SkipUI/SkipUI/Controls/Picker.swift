@@ -1,5 +1,4 @@
 // Copyright 2023–2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 #if !SKIP_BRIDGE
 import Foundation
 #if SKIP
@@ -419,7 +418,7 @@ struct PickerSelectionView<SelectionValue> : View {
                     .opacity(labelValue == selectionValue ? 1.0 : 0.0)
             }
         }
-        .buttonStyle(ButtonStyle.plain)
+        .buttonStyle(PlainButtonStyle())
         .asRenderable()
     }
 }

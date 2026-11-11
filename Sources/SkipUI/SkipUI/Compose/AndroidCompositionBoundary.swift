@@ -1,5 +1,4 @@
 // Copyright 2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 #if !SKIP_BRIDGE
 #if SKIP
 import androidx.compose.runtime.Composable
@@ -100,7 +99,7 @@ public struct AndroidCompositionBoundary: View, Renderable {
                     }
                     storage.inputs = inputs
                     storage.content = preparedProjection ?? content()
-                    composeView.setContent {
+                    AndroidCompositionBoundarySetContent(view: composeView) {
                         storage.content.Compose(context: childContext)
                     }
                 }

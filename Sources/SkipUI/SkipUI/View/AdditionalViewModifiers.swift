@@ -1,5 +1,4 @@
 // Copyright 2023–2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 #if !SKIP_BRIDGE
 import Foundation
 #if SKIP
@@ -540,15 +539,27 @@ extension View {
         // Fix an axis to the content's ideal size by measuring it unbounded on that axis, mirroring
         // SwiftUI's fixedSize (the view is proposed its ideal size and won't be compressed/truncated).
         // A non-fixed axis is left untouched so the flexible-width layout system still governs it.
-        return ModifiedContent(content: self, modifier: RenderModifier { context in
-            var modifier = context.modifier
+        // The content is rendered without the parent's flexible layout on a fixed axis, so it does not
+        // report itself as filling and the parent stack gives its free space to other children instead.
+        return ModifiedContent(content: self, modifier: RenderModifier { renderable, context in
+            var context = context
             if horizontal {
-                modifier = modifier.wrapContentWidth(unbounded: true)
+                context.modifier = context.modifier.wrapContentWidth(unbounded: true)
             }
             if vertical {
-                modifier = modifier.wrapContentHeight(unbounded: true)
+                context.modifier = context.modifier.wrapContentHeight(unbounded: true)
             }
-            return modifier
+            EnvironmentValues.shared.setValues {
+                if horizontal {
+                    $0.set_flexibleWidth(nil)
+                }
+                if vertical {
+                    $0.set_flexibleHeight(nil)
+                }
+                return ComposeResult.ok
+            } in: {
+                renderable.Render(context: context)
+            }
         })
         #else
         return self
@@ -1498,37 +1509,24 @@ extension View {
         #endif
     }
 
+    /// Starts native work and cancels it when its identity changes or the view is removed.
+    /// The bridged action installs `onCancel` synchronously before returning.
     // SKIP @bridge
     public func task(id value: Any, bridgedAction: @escaping (CompletionHandler) -> Void) -> any View {
         #if SKIP
         return ModifiedContent(content: self, modifier: SideEffectModifier { _ in
             let actionState = rememberUpdatedState(bridgedAction)
             DisposableEffect(value) {
-                let task = Task {
-                    // `Task.cancel()` only runs the handlers registered here: it never cancels
-                    // the coroutine, so `invokeOnCancellation` alone never reached the Swift task.
-                    var completionHandler: CompletionHandler? = nil
-                    withTaskCancellationHandler(operation: {
-                        kotlinx.coroutines.suspendCancellableCoroutine { continuation in
-                            let handler = CompletionHandler({
-                                do { continuation.resume(Unit, nil) } catch {}
-                            })
-                            completionHandler = handler
-                            continuation.invokeOnCancellation { _ in
-                                handler.onCancel?()
-                            }
-                            actionState.value(handler)
-                            // Cancelled before the action installed its `onCancel`.
-                            if Task.isCancelled {
-                                handler.onCancel?()
-                            }
-                        }
-                    }, onCancel: {
-                        completionHandler?.onCancel?()
-                    })
-                }
+                // The bridge starts its own Swift Task. A second, suspended Skip Task
+                // would not forward cooperative cancellation to a Kotlin continuation.
+                // Effect setup and disposal are serialized, so the callback is installed
+                // before disposal can request cancellation, even for immediate removal.
+                let completionHandler = CompletionHandler({})
+                actionState.value(completionHandler)
                 onDispose {
-                    task.cancel()
+                    let onCancel = completionHandler.onCancel
+                    completionHandler.onCancel = nil
+                    onCancel?()
                 }
             }
             return ComposeResult.ok
@@ -1909,7 +1907,8 @@ final class AndroidVerticalOverscrollPullDownConnection: NestedScrollConnection 
         return Offset(x: Float(0.0), y: available.y)
     }
 
-    override func onPostFling(consumed: Velocity, available: Velocity) async -> Velocity {
+    // Keep pull state and callbacks on the UI thread when this async override is transpiled.
+    @MainActor override func onPostFling(consumed: Velocity, available: Velocity) async -> Velocity {
         guard accumulatedPullPx > Float(0.0) else {
             return Velocity.Zero
         }

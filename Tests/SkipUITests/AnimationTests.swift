@@ -1,5 +1,4 @@
 // Copyright 2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 import Foundation
 import SwiftUI
 import XCTest
@@ -58,11 +57,13 @@ final class AnimationTests: SkipUITestCase {
         #if !SKIP
         throw XCTSkip("Animation.isInWithAnimation is Android-only")
         #else
-        XCTAssertFalse(Animation.isInWithAnimation)
-        withAnimation(.linear(duration: 1)) {
-            // body intentionally empty — the marker is published on exit
+        composeRule.runOnIdle {
+            XCTAssertFalse(Animation.isInWithAnimation)
+            withAnimation(.linear(duration: 1)) {
+                // body intentionally empty — the marker is published on exit
+            }
+            XCTAssertTrue(Animation.isInWithAnimation, "marker should keep isInWithAnimation true immediately after exit")
         }
-        XCTAssertTrue(Animation.isInWithAnimation, "marker should keep isInWithAnimation true immediately after exit")
         #endif
     }
 

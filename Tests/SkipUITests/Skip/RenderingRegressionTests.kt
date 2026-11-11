@@ -1,5 +1,4 @@
 // Copyright 2026 Skip
-// SPDX-License-Identifier: MPL-2.0
 package skip.ui
 
 import androidx.activity.ComponentActivity
@@ -11,11 +10,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCompositionContext
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertWidthIsEqualTo
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import org.junit.Assert.assertNotNull
@@ -286,6 +288,21 @@ class RenderingRegressionTests {
         rule.onNodeWithTag("boundary").assertHeightIsEqualTo(20.dp)
     }
 
+    @Test fun boundaryPassesMinimumConstraintsToContent() {
+        rule.setContent {
+            val parent = rememberCompositionContext()
+            Box(Modifier.size(200.dp), propagateMinConstraints = true) {
+                AndroidView(factory = { context ->
+                    AndroidCompositionBoundaryComposeView(context, parent) {
+                        Box(Modifier.testTag("constrained-child"))
+                    }
+                })
+            }
+        }
+        rule.onNodeWithTag("constrained-child").assertWidthIsEqualTo(200.dp)
+        rule.onNodeWithTag("constrained-child").assertHeightIsEqualTo(200.dp)
+    }
+
     @Test fun nestedForEachRetainsInnerRowStateInZStack() {
         assertNestedRowsRetainState { content -> ZStack(content = content) }
     }
@@ -296,6 +313,43 @@ class RenderingRegressionTests {
 
     @Test fun nestedForEachRetainsInnerRowStateInVStack() {
         assertNestedRowsRetainState { content -> VStack(content = content) }
+    }
+
+    /** Scrolling a lazy stack must compose newly visible rows only, not recompose rows that stay visible. */
+    @Test fun lazyVStackScrollDoesNotRecomposeVisibleRows() {
+        val compositions = mutableMapOf<Int, Int>()
+        rule.setContent {
+            Box(Modifier.size(100.dp, 200.dp)) {
+                ScrollView(content = {
+                    LazyVStack(spacing = 0.0, content = {
+                        ForEach(0 until 100) { index -> LazyRowCompositionProbe(index, compositions) }
+                    })
+                }).Compose()
+            }
+        }
+        rule.waitForIdle()
+        // Advance the first visible index one row at a time, as a slow drag would.
+        for (index in 1..20) {
+            rule.onNode(hasScrollToIndexAction()).performScrollToIndex(index)
+            rule.waitForIdle()
+        }
+        assertTrue("Rows must have scrolled into view", compositions.containsKey(25))
+        val recomposed = compositions.filterValues { it > 1 }
+        assertTrue("Visible rows must not recompose when the first visible index changes: $recomposed", recomposed.isEmpty())
+    }
+
+    /** Laying out row content before the row is placed crashes Compose ("LayoutNode N not found in RectList"). */
+    @Test fun listDoesNotLayOutRowContentBeforePlacingIt() {
+        var placementsForAlignment = 0
+        rule.setContent {
+            Box(Modifier.size(200.dp)) {
+                List(content = {
+                    ForEach(0 until 3) { _ -> ListRowPlacementProbe { placementsForAlignment++ } }
+                }).Compose()
+            }
+        }
+        rule.waitForIdle()
+        assertEquals("Row content must only be laid out when the row is placed", 0, placementsForAlignment)
     }
 
     private fun assertNestedRowsRetainState(stack: (() -> View) -> View) {
@@ -371,5 +425,29 @@ private class RenderingIdentityProbe(
         val token = remember { Any() }
         SideEffect { tokens[id] = token }
         Box(Modifier.size(20.dp))
+    }
+}
+
+/** A non-skippable row, like a transpiled SwiftUI view, that counts its committed compositions. */
+private class LazyRowCompositionProbe(
+    val index: Int,
+    val compositions: MutableMap<Int, Int>
+): View, Renderable {
+    @Composable override fun Render(context: ComposeContext) {
+        SideEffect { compositions[index] = (compositions[index] ?: 0) + 1 }
+        Box(Modifier.size(20.dp))
+    }
+}
+
+/** Counts placements done only to compute alignment lines, which Compose signals with null coordinates. */
+private class ListRowPlacementProbe(val onPlacementForAlignment: () -> Unit): View, Renderable {
+    @Composable override fun Render(context: ComposeContext) {
+        Layout(modifier = context.modifier, content = { Box(Modifier.size(20.dp)) }) { measurables, constraints ->
+            val placeable = measurables[0].measure(constraints)
+            layout(placeable.width, placeable.height) {
+                if (coordinates == null) onPlacementForAlignment()
+                placeable.place(0, 0)
+            }
+        }
     }
 }

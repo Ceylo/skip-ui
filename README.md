@@ -1327,6 +1327,7 @@ Support levels:
               <summary><code>Text</code> (<a href="https://skip.dev/docs/components/text/">example</a>)</summary>
               <ul>
                   <li><code>Text(...) + Text(...)</code> is not supported</li>
+                  <li>Editable <code>Text(AttributedString)</code> supports fonts, foreground colors, links, single solid underlines and strikethroughs, baseline offsets, and inline Markdown intents. See <a href="#editable-attributed-text">Editable attributed text</a>.</li>
                   <li>For formatters, only <code>Text.DateStyle.date</code> and <code>Text.DateStyle.time</code> are supported</li>
               </ul>
           </details>      
@@ -1479,6 +1480,18 @@ Support levels:
    <tr>
       <td>✅</td>
       <td><code>.alert</code></td>
+    </tr>
+    <tr>
+      <td>🟡</td>
+      <td>
+          <details>
+              <summary><code>.alignmentGuide</code></summary>
+              <ul>
+                  <li>Supports <code>.listRowSeparatorLeading</code> and <code>.listRowSeparatorTrailing</code> only</li>
+                  <li>See <a href="#list-row-separator-alignment">List Row Separator Alignment</a></li>
+              </ul>
+          </details>
+      </td>
     </tr>
     <tr>
       <td>✅</td>
@@ -3189,6 +3202,24 @@ List($people, id: \.fullName, editActions: .all) { $person in
 
 You can also enable editing by using a `ForEach` with the `.onDelete` and `.onMove` modifiers. Make sure your `ForEach` also supplies an `id` for each item.
 
+#### List Row Separator Alignment
+
+Use SwiftUI's horizontal separator guides to customize a list row's separator:
+
+```swift
+Text("Title")
+    .alignmentGuide(.listRowSeparatorLeading) { dimensions in
+        dimensions[.leading] + 12
+    }
+    .alignmentGuide(.listRowSeparatorTrailing) { dimensions in
+        dimensions[.trailing] - 12
+    }
+```
+
+The closure receives the modified view's measured width and height in points. `ViewDimensions` supports `.leading`, `.center`, `.trailing`, and the two separator guides. Positions are relative to the view's leading edge and mirror in right-to-left layouts. Guides on nested row content propagate through layout containers, so a guide on a label beside an icon can align the separator with that label. Modifier order matters: padding outside a guide shifts its position with the content.
+
+Rows without explicit guides retain their existing separator insets. These guides only position separators; they do not change row content placement or separator visibility. Other alignment guides, custom `AlignmentID`s, baseline guides, and explicit-guide subscripts are not currently supported.
+
 #### List Limitations
 
 - Compose requires that every `id` value in a `List` is unique. This applies even if your list consists of multiple `Sections` or uses multiple `ForEach` components to define its content.
@@ -3691,7 +3722,47 @@ Still other modifiers don't affect rendering at all, but perform side effects or
 
 Like other SwiftUI components, modifiers use `#if SKIP ... #else ...` to stub the Swift implementation and keep SkipUI buildable in Xcode.
 
-## License
+## Editable attributed text
 
-This software is licensed under the 
-[Mozilla Public License 2.0](https://www.mozilla.org/MPL/).
+With the matching SkipFoundation editable-attributed-string support, Lite code
+can use the same range-editing syntax as SwiftUI:
+
+```swift
+var text = AttributedString("Hello world")
+if let range = text.range(of: "world") {
+    text[range].font = .headline
+    text[range].foregroundColor = .orange
+    text[range].underlineStyle = .single
+}
+Text(text)
+```
+
+The same properties are available on `AttributeContainer` and readable on runs.
+`Text` snapshots the current attributes into the shared run renderer, including
+edits made after Markdown parsing. Fonts, foreground colors, links, baseline
+offsets, and the supported inline presentation intents are rendered. Underline
+and strikethrough values currently render as single solid lines; their pattern
+and color options are not rendered.
+
+Case-insensitive search ranges can be highlighted using the same API on both platforms:
+
+```swift
+var text = AttributedString("Search highlighting in Skip")
+if let range = text.range(of: "skip", options: .caseInsensitive) {
+    text[range].foregroundColor = .accentColor
+}
+Text(text)
+```
+
+SkipFoundation performs the search using Android ICU and returns a range in the
+original text. See its README for supported search options and platform differences.
+
+Infer ranges from `range(of:)` or `runs`. Lite does not implement generic attribute
+scopes or explicit `Range<AttributedString.Index>` slicing. See SkipFoundation's
+editable attributed strings documentation for the supported subset.
+
+This requires SkipFoundation 1.4.9 or later for editable attributed strings and
+ICU search, merged in
+[SkipFoundation PR #143](https://github.com/skiptools/skip-foundation/pull/143).
+The package declares this minimum release requirement. No fork or local dependency
+is required.
