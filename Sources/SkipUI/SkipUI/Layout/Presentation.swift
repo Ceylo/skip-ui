@@ -250,6 +250,7 @@ final class PresentedContentHolder {
                             $0.set_sheetDepth(sheetDepth + 1)
                         }
                         $0.setdismiss(DismissAction(action: { isPresented.set(false) }))
+                        $0.setisPresented(isPresented.get())
                         $0.set_tabReselectSignal(nil)
                         return ComposeResult.ok
                     } in: {

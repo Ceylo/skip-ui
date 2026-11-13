@@ -210,6 +210,7 @@ public struct NavigationStack : View, Renderable {
                             let toolbarContentPreferencesCollector = PreferenceCollector<ToolbarContentPreferences>(key: ToolbarContentPreferenceKey.self, state: toolbarContentPreferences)
                             EnvironmentValues.shared.setValues {
                                 $0.setdismiss(DismissAction(action: { navigator.value.navigateBack() }))
+                                $0.setisPresented(navBackStack.contains(navKey))
                                 return ComposeResult.ok
                             } in: {
                                 let arguments = NavigationEntryArguments(isRoot: false, state: state, safeArea: safeArea, ignoresSafeAreaEdges: ignoresSafeAreaEdges, title: title.value.reduced, toolbarPreferences: toolbarPreferences.value.reduced)

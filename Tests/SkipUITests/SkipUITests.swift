@@ -667,6 +667,70 @@ final class SkipUITests: SkipUITestCase {
         }
     }
 
+    func testPushedViewIsPresentedUntilPopped() throws {
+        #if !SKIP
+        throw XCTSkip("Navigation entries are a Compose behavior")
+        #else
+        IsPresentedProbe.changes = []
+        try testUI(view: {
+            IsPresentedStack()
+        }, eval: { rule in
+            rule.waitForIdle()
+            rule.onNodeWithText("Push").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("presented: true").assertIsDisplayed()
+
+            rule.onNodeWithText("Cover").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Covering").assertIsDisplayed()
+            rule.onNodeWithText("Uncover").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("presented: true").assertIsDisplayed()
+            XCTAssertTrue(IsPresentedProbe.changes.isEmpty)
+
+            rule.onNodeWithText("Pop").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Push").assertIsDisplayed()
+            XCTAssertEqual(IsPresentedProbe.changes, [false])
+        })
+        #endif
+    }
+
+    struct IsPresentedStack: View {
+        @State var path: [Int] = []
+
+        var body: some View {
+            NavigationStack(path: $path) {
+                Button("Push") { path.append(1) }
+                    .navigationDestination(for: Int.self) { value in
+                        if value == 1 {
+                            IsPresentedProbe(path: $path)
+                        } else {
+                            Button("Uncover") { path.removeLast() }
+                                .navigationTitle("Covering")
+                        }
+                    }
+            }
+        }
+    }
+
+    struct IsPresentedProbe: View {
+        static var changes: [Bool] = []
+        @Binding var path: [Int]
+        @Environment(\.isPresented) var isPresented
+
+        var body: some View {
+            VStack {
+                Text("presented: \(isPresented)")
+                Button("Cover") { path.append(2) }
+                Button("Pop") { path.removeLast() }
+            }
+            .onChange(of: isPresented) { _, newValue in
+                Self.changes.append(newValue)
+            }
+        }
+    }
+
     func testListRestoresFirstVisibleRowByKey() throws {
         #if !SKIP
         throw XCTSkip("List state restoration is a Compose behavior")

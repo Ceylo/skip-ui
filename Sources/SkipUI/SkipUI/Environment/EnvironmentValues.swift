@@ -312,6 +312,8 @@ extension EnvironmentValues {
             return EnvironmentSupport(builtinValue: horizontalSizeClass?.rawValue)
         case "isEnabled":
             return EnvironmentSupport(builtinValue: isEnabled)
+        case "isPresented":
+            return EnvironmentSupport(builtinValue: isPresented)
         case "isSearching":
             return EnvironmentSupport(builtinValue: isSearching)
         case "layoutDirection":
@@ -373,6 +375,8 @@ extension EnvironmentValues {
         case "isEnabled":
             setisEnabled(value as? Bool != false)
             return true
+        case "isPresented":
+            return false
         case "isSearching":
             return false
         case "horizontalSizeClass":
@@ -458,6 +462,11 @@ extension EnvironmentValues {
     public var isEnabled: Bool {
         get { builtinValue(key: "isEnabled", defaultValue: { true }) as! Bool }
         set { setBuiltinValue(key: "isEnabled", value: newValue, defaultValue: { true }) }
+    }
+
+    public var isPresented: Bool {
+        get { builtinValue(key: "isPresented", defaultValue: { false }) as! Bool }
+        set { setBuiltinValue(key: "isPresented", value: newValue, defaultValue: { false }) }
     }
 
     public var isSearching: Bool {
@@ -632,7 +641,6 @@ extension EnvironmentValues {
     var isFocused: Bool
     var isHoverEffectEnabled: Bool
     var isLuminanceReduced: Bool
-    var isPresented: Bool
     var isSceneCaptured: Bool
     var supportsMultipleWindows: Bool
 
