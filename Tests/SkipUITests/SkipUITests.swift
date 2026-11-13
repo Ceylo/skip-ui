@@ -731,6 +731,54 @@ final class SkipUITests: SkipUITestCase {
         }
     }
 
+    func testSheetContentIsPresentedUntilDismissed() throws {
+        #if !SKIP
+        throw XCTSkip("Sheet presentation is a Compose behavior")
+        #else
+        SheetPresentedProbe.changes = []
+        try testUI(view: {
+            SheetPresentedHost()
+        }, eval: { rule in
+            rule.waitForIdle()
+            rule.onNodeWithText("Show").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("sheet presented: true").assertIsDisplayed()
+
+            rule.onNodeWithText("Close").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithText("Close").assertDoesNotExist()
+            XCTAssertEqual(SheetPresentedProbe.changes, [false])
+        })
+        #endif
+    }
+
+    struct SheetPresentedHost: View {
+        @State var isShown = false
+
+        var body: some View {
+            Button("Show") { isShown = true }
+                .sheet(isPresented: $isShown) {
+                    SheetPresentedProbe()
+                }
+        }
+    }
+
+    struct SheetPresentedProbe: View {
+        static var changes: [Bool] = []
+        @Environment(\.isPresented) var isPresented
+        @Environment(\.dismiss) var dismiss
+
+        var body: some View {
+            VStack {
+                Text("sheet presented: \(isPresented)")
+                Button("Close") { dismiss() }
+            }
+            .onChange(of: isPresented) { _, newValue in
+                Self.changes.append(newValue)
+            }
+        }
+    }
+
     func testListRestoresFirstVisibleRowByKey() throws {
         #if !SKIP
         throw XCTSkip("List state restoration is a Compose behavior")
